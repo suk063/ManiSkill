@@ -29,12 +29,12 @@ class TableScanDiscreteInitEnv(BaseEnv):
     cube_spawn_center = (0, 0)
     
 
-    def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
+    def __init__(self, *args, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         if robot_uids in PICK_CUBE_CONFIGS:
             cfg = PICK_CUBE_CONFIGS[robot_uids]
         else:
-            cfg = PICK_CUBE_CONFIGS["panda"]
+            cfg = PICK_CUBE_CONFIGS["xarm6_robotiq"]
         self.cube_half_size = cfg["cube_half_size"]
         self.goal_thresh = cfg["goal_thresh"]
         self.cube_spawn_half_size = cfg["cube_spawn_half_size"]

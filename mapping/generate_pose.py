@@ -28,6 +28,7 @@ IMG_DIR = SCRIPT_DIR / "images"
 IMG_DIR.mkdir(exist_ok=True)
 POSE_DIR = SCRIPT_DIR / "poses"
 POSE_DIR.mkdir(exist_ok=True)
+VIDEO_PATH = IMG_DIR / "moving_camera_capture.mp4"
 rgb_frames = []
 
 INTRINSIC_TXT = IMG_DIR / "intrinsic.txt"
@@ -106,19 +107,18 @@ def capture():
     pts_all.append(np.asarray(pcd.points))
     rgb_all.append(np.asarray(pcd.colors))
     print(f"[OK] captured {len(pcd.points)} pts; total {sum(map(len, pts_all))}")
+    # imageio.imwrite(IMG_DIR / f"{frame_idx:04d}.png", rgb_np)
 
-def deg(*angles): return np.deg2rad(angles)
-motions = [
-    np.concatenate([deg(   0, -70,  90,  30, 50,  0), [0.04]]),
-    np.concatenate([deg(  20, -70,  90, -30, 50,  0), [0.04]]),
-    np.concatenate([deg(  50, -70,  50,  15, 50,  0), [0.04]]),
-    np.concatenate([deg( -20, -70,  90, -30, 50,  0), [0.04]]),
-]
+TOTAL_SIM_STEPS = 1500
+CAPTURE_INTERVAL = 15
 
-for action in motions:
-    for t in range(300):
-        env.step(action)
-        if t % 30 == 0: capture()
+null_action = np.zeros(env.action_space.shape)
+
+for t in range(TOTAL_SIM_STEPS):
+    env.step(null_action)
+
+    if t % CAPTURE_INTERVAL == 0:
+        capture()
 
 capture()
 
@@ -158,6 +158,16 @@ if args.viewer:
     while not viewer.window.should_close and time.time() - start < 120:
         viewer.render()
     viewer.close()
+
+
+if rgb_frames:                                              
+    print(f"[VIDEO] writing {len(rgb_frames)} frames → {VIDEO_PATH}")
+    with imageio.get_writer(str(VIDEO_PATH), fps=10) as writer:
+        for fr in rgb_frames:
+            writer.append_data(fr)
+    print(f"[VIDEO] wrote {VIDEO_PATH}")
+else:
+    print("[WARN] No RGB frames to save—video skipped.")
 
 env.close()
 print("Done.")
