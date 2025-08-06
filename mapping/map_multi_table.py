@@ -285,9 +285,8 @@ def main():
                 grid = grids[env_name]
 
                 img_tensor = data["img_tensor"].to(DEVICE, non_blocking=True)
-                depth_t = data["depth_t"].to(DEVICE, non_blocking=True)
                 depth_t = data["depth_t"].unsqueeze(0).to(DEVICE, non_blocking=True)
-                extrinsic_t = data["extrinsic_t"].unsqueeze(0).unsqueeze(0).to(DEVICE, non_blocking=True)
+                extrinsic_t = data["extrinsic_t"].unsqueeze(0).to(DEVICE, non_blocking=True)
 
                 with torch.no_grad():
                     vis_feat = get_visual_features(clip_model, img_tensor)
