@@ -42,13 +42,13 @@ class TableScanEnv(BaseEnv):
     cube_spawn_center = (0, 0)
         
     CAM_RADII = [0.2, 0.3, 0.4]
-    VIEW_HEIGHTS = [-0.2, 0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7]
+    VIEW_HEIGHTS = [0.05, 0.1, 0.2, 0.3, 0.5, 0.7]
     CAM_SPEED  = np.deg2rad(1) # rad / sim-step (≈115 °/s at 60 Hz)
     ANGLE_STEP_DEG = 10
     ANGLE_STEP_RAD = np.deg2rad(ANGLE_STEP_DEG)
 
-    MIN_TILT_DEG = 10          # when cam is at min height
-    MAX_TILT_DEG = 45         # when cam is at max height
+    MIN_TILT_DEG = 20          # when cam is at min height
+    MAX_TILT_DEG = 40         # when cam is at max height
 
     THETA_MIN    = np.deg2rad(-150)
     THETA_MAX    = np.deg2rad( 150)
