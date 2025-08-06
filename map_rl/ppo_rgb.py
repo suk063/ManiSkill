@@ -216,29 +216,26 @@ if __name__ == "__main__":
 
         # 2. Load ALL grids (grid_dim²) and build sampling helper
         total_envs = args.grid_dim ** 2
-        all_grids = []
-        if not os.path.exists(args.map_dir):
-            print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
-            exit()
+        map_paths = [f"{args.map_dir}/env_{i:03d}_grid.sparse.pt" for i in range(total_envs)]
 
-        print(f"Loading {total_envs} maps from {args.map_dir} ...")
-        for i in range(total_envs):
-            grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.sparse.pt")
-            if not os.path.exists(grid_path):
-                print(f"[ERROR] Map file not found: {grid_path}. Exiting.")
-                exit()
-            all_grids.append(VoxelHashTable.load_sparse(grid_path, device=device))
-        print(f"--- Loaded {len(all_grids)} maps. ---")
+        cpu_cache: dict[int, VoxelHashTable] = {}
 
-        # --------------------------------------------------------------
-        # Helper for random subset sampling
-        # --------------------------------------------------------------
-        def _sample_grids(n_envs: int):
+        def _load_grid_cpu(idx: int) -> VoxelHashTable:
+            """Load a single grid on the CPU and keep a cached copy."""
+            if idx not in cpu_cache:
+                cpu_cache[idx] = VoxelHashTable.load_sparse(map_paths[idx], device="cpu")
+            return cpu_cache[idx]
+
+        
+        def _sample_grids(n_envs: int, device: torch.device):
             idx = np.random.choice(total_envs, n_envs, replace=False)
-            return idx, [all_grids[i] for i in idx]
+            # load-sparse directly to the right device, no .to() afterwards
+            grids = [VoxelHashTable.load_sparse(map_paths[i], device=device) for i in idx]
+            print(f"[Sampling] Loaded {n_envs} grids → CUDA. Indices: {idx.tolist()}")
+            return idx, grids
 
         # Initial sample for the very first reset
-        active_indices, grids = _sample_grids(args.num_envs if not args.evaluate else args.num_eval_envs)
+        active_indices, grids = _sample_grids(args.num_envs, device)
         
         # debug: Visualize the first map
         # if grids and decoder:
@@ -313,9 +310,15 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, _ = envs.reset(seed=args.seed, options={'global_idx': active_indices.tolist()})
-    if args.use_map and 'all_grids' in globals() and len(all_grids) >= args.num_eval_envs:
-        eval_indices, eval_grids = _sample_grids(args.num_eval_envs)
+    if args.use_map:
+        next_obs, _ = envs.reset(
+            seed=args.seed,
+            options={'global_idx': active_indices.tolist()}
+        )
+    else:
+        next_obs, _ = envs.reset(seed=args.seed)
+    if args.use_map and total_envs >= args.num_eval_envs:
+        eval_indices, eval_grids = _sample_grids(args.num_eval_envs, device)
         eval_obs, _ = eval_envs.reset(seed=args.seed, options={'global_idx': eval_indices.tolist()})
     else:
         eval_grids = grids if args.use_map else None
@@ -337,8 +340,11 @@ if __name__ == "__main__":
         # --------------------------------------------------------------
         # Resample subset of environments for this epoch (train)
         # --------------------------------------------------------------
-        if args.use_map and 'all_grids' in globals() and len(all_grids) > args.num_envs:
-            active_indices, grids = _sample_grids(args.num_envs)
+        if args.use_map and total_envs > args.num_envs:
+            for g in grids: 
+                g.to("cpu")
+            torch.cuda.empty_cache()
+            active_indices, grids = _sample_grids(args.num_envs, device)
             next_obs, _ = envs.reset(options={'global_idx': active_indices.tolist()})
             next_done = torch.zeros(args.num_envs, device=device)
         print(f"Epoch: {iteration}, global_step={global_step}")

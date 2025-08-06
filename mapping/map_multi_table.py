@@ -183,20 +183,6 @@ def chunk(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
-def build_grids(shard_dirs, device):
-    grids = {}
-    for d in shard_dirs:
-        grids[d.name] = VoxelHashTable(
-            resolution=0.12,
-            num_levels=GRID_LVLS,
-            feature_dim=GRID_FEAT_DIM,
-            scene_bound_min=SCENE_MIN,
-            scene_bound_max=SCENE_MAX,
-            device=device,
-            mode="train",
-        )
-    return grids
-
 def collect_samples(shard_dirs):
     samples = []
     for d in shard_dirs:
@@ -261,7 +247,7 @@ def main():
     for shard_id, shard_dirs in enumerate(chunk(env_dirs, BATCH_SIZE)):
         print(f"\n=== SHARD {shard_id}: {len(shard_dirs)} envs {', '.join(d.name for d in shard_dirs)} ===")
 
-        grids = build_grids(shard_dirs, device=DEVICE)
+        grids = {d.name: all_grids[d.name] for d in shard_dirs}
 
         shard_samples = collect_samples(shard_dirs)
         if not shard_samples:
@@ -511,7 +497,7 @@ def main():
                     pyo.plot(fig, filename=str(VIS_HTML_PATH), auto_open=False)
                     print(f"[VIS-GRID] Visualization of accessed vertices saved to {VIS_HTML_PATH}")
 
-        del grids, optimizer, dataset, loader
+        del grids, dataset, loader
         torch.cuda.empty_cache()
 
     print("\nDone.")

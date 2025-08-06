@@ -171,25 +171,13 @@ class TableScanEnv(BaseEnv):
         self._cam_height = self.VIEW_HEIGHTS[self._h_idx]
         self._cam_radius = self.CAM_RADII[self._r_idx]
 
-        self._cubes: List[Actor] = []
-        for i in range(self.num_envs):
-            builder = self.scene.create_actor_builder()
-            builder.add_box_collision(half_size=[self.cube_half_size] * 3)
-            builder.add_box_visual(
-                half_size=[self.cube_half_size] * 3, 
-                material=sapien.render.RenderMaterial(
-                    base_color=self._batched_episode_rng[i].uniform(low=0., high=1., size=(3, )).tolist() + [1]
-                )
-            )
-            builder.initial_pose = sapien.Pose(p=[0, 0, self.cube_half_size])
-            builder.set_scene_idxs([i])
-            self._cubes.append(builder.build(name=f"cube_{i}"))
-            self.remove_from_state_dict_registry(self._cubes[-1])
-
-        # Merge all cubes into a single Actor object
-        self.cube = Actor.merge(self._cubes, name="cube")
-        self.add_to_state_dict_registry(self.cube)  # add merged cube to state dict
-
+        self.cube = actors.build_cube(
+            self.scene,
+            half_size=self.cube_half_size,
+            color=[1, 0, 0, 1],
+            name="cube",
+            initial_pose=sapien.Pose(p=[0, 0, self.cube_half_size]),
+        )
 
     def _reconfigure(self, options=dict()):
         """Clean up individual actors created for domain randomization to prevent memory leaks during resets."""
