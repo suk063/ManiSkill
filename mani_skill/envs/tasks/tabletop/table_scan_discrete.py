@@ -1,40 +1,42 @@
-# table_scan_env.py
-from typing import Dict, Any, Union, List
-import numpy as np, torch, sapien
+from typing import Any, Dict, List, Union, Tuple
+import numpy as np
+import sapien
+import torch
 from transforms3d.euler import euler2quat
 
 import mani_skill.envs.utils.randomization as randomization
+from mani_skill.agents.robots import XArm6Robotiq
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.envs.tasks.tabletop.pick_cube_cfgs import PICK_CUBE_CONFIGS
-from mani_skill.utils.structs import Pose, GPUMemoryConfig, SimConfig
-from mani_skill.utils.building import actors
-from mani_skill.utils.scene_builder.table import TableSceneBuilder
-from mani_skill.utils import sapien_utils
 from mani_skill.sensors.camera import CameraConfig
+from mani_skill.utils import sapien_utils
+from mani_skill.utils.building import actors
 from mani_skill.utils.registration import register_env
-from mani_skill.agents.robots import XArm6Robotiq
+from mani_skill.utils.scene_builder.table import TableSceneBuilder
+from mani_skill.utils.structs.pose import Pose
 from mani_skill.utils.structs import Actor
 
 from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
- 
-@register_env("TableScanDiscreteInit-v0", max_episode_steps=1_000)
+
+@register_env("TableScanDiscreteInit-v0", max_episode_steps=50)
 class TableScanDiscreteInitEnv(BaseEnv):
-    SUPPORTED_ROBOTS = ["xarm6_robotiq"]
-    agent: XArm6Robotiq
-        
+
+    SUPPORTED_ROBOTS = [
+        "xarm6_robotiq",
+    ]
+    agent: Union[XArm6Robotiq]
     cube_half_size = 0.02
-    goal_thresh = 0.025
+    goal_thresh = 0.025  
     cube_spawn_half_size = 0.05
     cube_spawn_center = (0, 0)
-    
 
-    def __init__(self, *args, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
+    def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         if robot_uids in PICK_CUBE_CONFIGS:
             cfg = PICK_CUBE_CONFIGS[robot_uids]
         else:
-            cfg = PICK_CUBE_CONFIGS["xarm6_robotiq"]
+            cfg = PICK_CUBE_CONFIGS["panda"]
         self.cube_half_size = cfg["cube_half_size"]
         self.goal_thresh = cfg["goal_thresh"]
         self.cube_spawn_half_size = cfg["cube_spawn_half_size"]
@@ -45,15 +47,6 @@ class TableScanDiscreteInitEnv(BaseEnv):
         self.human_cam_eye_pos = cfg["human_cam_eye_pos"]
         self.human_cam_target_pos = cfg["human_cam_target_pos"]
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
-
-    # Specify default simulation/gpu memory configurations to override any default values
-    @property
-    def _default_sim_config(self):
-        return SimConfig(
-            gpu_memory_config=GPUMemoryConfig(
-                found_lost_pairs_capacity=2**25, max_rigid_patch_count=2**18
-            )
-        )
 
     @property
     def _default_sensor_configs(self):
@@ -93,95 +86,26 @@ class TableScanDiscreteInitEnv(BaseEnv):
 
     @property
     def _default_human_render_camera_configs(self):
-        pose = sapien_utils.look_at([0.6, 0.7, 0.6], [0.0, 0.0, 0.35])
-        return CameraConfig(
-            "render_camera", pose=pose, width=512, height=512, fov=1, near=0.01, far=100
+        pose = sapien_utils.look_at(
+            eye=self.human_cam_eye_pos, target=self.human_cam_target_pos
         )
-
-    @property
-    def _supports_sensor_data(self):
-        return True
+        return CameraConfig("render_camera", pose, 512, 512, 1, 0.01, 100)
 
     def _load_agent(self, options: dict, initial_agent_poses = sapien.Pose(p=[-0.615, 0, 0]), build_separate: bool = False):
         super()._load_agent(options, initial_agent_poses, build_separate)
-        
-    # MARK: This is for lighting randomization, which we currently do not use
-    def _load_lighting(self, options: dict):
-        for scene in self.scene.sub_scenes:
-            scene.ambient_light = [np.random.uniform(0.2, 0.6), np.random.uniform(0.2, 0.6), np.random.uniform(0.2, 0.6)]
-            scene.add_directional_light(np.random.uniform(-1, 1, 3), [1, 1, 1], shadow=True, shadow_scale=5, shadow_map_size=4096)
-            scene.add_directional_light([0, 0, -1], [1, 1, 1])
 
-    def _load_scene(self, options: Dict):
+    def _load_scene(self, options: dict):
         self.table_scene = TableSceneBuilder(
-            env=self, custom_table=True, randomize_colors=True, # MARK: Trigger this as True for domain randomization
+            self, robot_init_qpos_noise=self.robot_init_qpos_noise, custom_table=True
         )
         self.table_scene.build()
-        
-        # MARK: We first comment out the domain randomization part
-        # ### Cube randomization: Build cubes separately for each parallel environment to enable domain randomization        
-        self._cubes: List[Actor] = []
-        for i in range(self.num_envs):
-            builder = self.scene.create_actor_builder()
-            builder.add_box_collision(half_size=[self.cube_half_size] * 3)
-            builder.add_box_visual(
-                half_size=[self.cube_half_size] * 3, 
-                material=sapien.render.RenderMaterial(
-                    base_color=self._batched_episode_rng[i].uniform(low=0., high=1., size=(3, )).tolist() + [1]
-                )
-            )
-            builder.initial_pose = sapien.Pose(p=[0, 0, self.cube_half_size])
-            builder.set_scene_idxs([i])
-            self._cubes.append(builder.build(name=f"cube_{i}"))
-            self.remove_from_state_dict_registry(self._cubes[-1])  # remove individual cube from state dict
-
-        # Merge all cubes into a single Actor object
-        self.cube = Actor.merge(self._cubes, name="cube")
-        self.add_to_state_dict_registry(self.cube)  # add merged cube to state dict
-
-        ### Agent randomization
-        for link in self.agent.robot.links:
-            for i, obj in enumerate(link._objs):
-                # modify the i-th object which is in parallel environment i
-                
-                # modifying physical properties e.g. randomizing mass from 0.1 to 1kg
-                rigid_body_component: PhysxRigidBodyComponent = obj.entity.find_component_by_type(PhysxRigidBodyComponent)
-                if rigid_body_component is not None:
-                    # note the use of _batched_episode_rng instead of torch.rand. _batched_episode_rng helps ensure reproducibility in parallel environments.
-                    rigid_body_component.mass = self._batched_episode_rng[i].uniform(low=0.1, high=1)
-                
-                # modifying per collision shape properties such as friction values
-                for shape in obj.collision_shapes:
-                    shape.physical_material.dynamic_friction = self._batched_episode_rng[i].uniform(low=0.1, high=0.3)
-                    shape.physical_material.static_friction = self._batched_episode_rng[i].uniform(low=0.1, high=0.3)
-                    shape.physical_material.restitution = self._batched_episode_rng[i].uniform(low=0.1, high=0.3)
-
-                render_body_component: RenderBodyComponent = obj.entity.find_component_by_type(RenderBodyComponent)
-                if render_body_component is not None:
-                    for render_shape in render_body_component.render_shapes:
-                        for part in render_shape.parts:
-                            # you can change color, use texture files etc.
-                            part.material.set_base_color(self._batched_episode_rng[i].uniform(low=0., high=1., size=(3, )).tolist() + [1])
-                            # note that textures must use the sapien.render.RenderTexture2D 
-                            # object which allows passing a texture image file path
-                            part.material.set_base_color_texture(None)
-                            part.material.set_normal_texture(None)
-                            part.material.set_emission_texture(None)
-                            part.material.set_transmission_texture(None)
-                            part.material.set_metallic_texture(None)
-                            part.material.set_roughness_texture(None)
-        
-        # self.cube = actors.build_cube(
-        #     self.scene,
-        #     half_size=self.cube_half_size,
-        #     color=[1, 0, 0, 1],
-        #     name="cube",
-        #     initial_pose=sapien.Pose(p=[0, 0, self.cube_half_size]),
-        # )
-        
-        self.table_center = [0, 0, self.table_scene.table_height/2]
-        
-        ### Non-randomized objects
+        self.cube = actors.build_cube(
+            self.scene,
+            half_size=self.cube_half_size,
+            color=[1, 0, 0, 1],
+            name="cube",
+            initial_pose=sapien.Pose(p=[0, 0, self.cube_half_size]),
+        )
         self.goal_site = actors.build_sphere(
             self.scene,
             radius=self.goal_thresh,
@@ -193,41 +117,31 @@ class TableScanDiscreteInitEnv(BaseEnv):
         )
         self._hidden_objects.append(self.goal_site)
 
-
-    def _reconfigure(self, options=dict()):
-        """Clean up individual actors created for domain randomization to prevent memory leaks during resets."""
-        if hasattr(self, '_cubes'):
-            # Remove individual cubes from the scene
-            for cube in self._cubes:
-                if hasattr(cube, 'entity') and cube.entity is not None:
-                    self.scene.remove_actor(cube)
-            self._cubes.clear()
-        
-        # Clean up table scene builder if it exists
-        if hasattr(self, 'table_scene'):
-            self.table_scene.cleanup()
-
-        super()._reconfigure(options)
-
-    def _initialize_episode(self, env_idx: torch.Tensor, options: Dict):
+    def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
             b = len(env_idx)
             self.table_scene.initialize(env_idx)
-            
             xyz = torch.zeros((b, 3))
-            
-            # Cube position chosen from a 10x10 grid
-            grid_idx = env_idx % 100
-            x_grid = grid_idx // 10
-            y_grid = grid_idx % 10
-            xyz[:, 0] = torch.linspace(0, 1, 10)[x_grid] * self.cube_spawn_half_size * 2 - self.cube_spawn_half_size
-            xyz[:, 1] = torch.linspace(0, 1, 10)[y_grid] * self.cube_spawn_half_size * 2 - self.cube_spawn_half_size
+            xyz[:, :2] = (
+                torch.rand((b, 2)) * self.cube_spawn_half_size * 2
+                - self.cube_spawn_half_size
+            )
             xyz[:, 0] += self.cube_spawn_center[0]
             xyz[:, 1] += self.cube_spawn_center[1]
+
             xyz[:, 2] = self.cube_half_size
- 
             qs = randomization.random_quaternions(b, lock_x=True, lock_y=True, lock_z=True)
             self.cube.set_pose(Pose.create_from_pq(xyz, qs))
+
+            goal_xyz = torch.zeros((b, 3))
+            goal_xyz[:, :2] = (
+                torch.rand((b, 2)) * self.cube_spawn_half_size * 2
+                - self.cube_spawn_half_size
+            )
+            goal_xyz[:, 0] += self.cube_spawn_center[0]
+            goal_xyz[:, 1] += self.cube_spawn_center[1]
+            goal_xyz[:, 2] = torch.rand((b)) * self.max_goal_height + xyz[:, 2]
+            self.goal_site.set_pose(Pose.create_from_pq(goal_xyz))
 
     def _get_obs_extra(self, info: Dict):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
@@ -311,5 +225,177 @@ class TableScanDiscreteInitEnv(BaseEnv):
     ):
         return self.compute_dense_reward(obs=obs, action=action, info=info) / 5
 
-    def get_table_center(self):
-        return self.table_center
+
+
+@register_env("TableScanDiscreteInitDR-v0", max_episode_steps=50)
+class TableScanDiscreteInitDR(TableScanDiscreteInitEnv):
+    def __init__(self, *args,  robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
+        # Set default reconfiguration_freq if not provided
+        if 'reconfiguration_freq' not in kwargs:
+            kwargs['reconfiguration_freq'] = 1
+        super().__init__(*args, robot_uids=robot_uids, robot_init_qpos_noise=robot_init_qpos_noise, **kwargs)
+
+    def _load_agent(self, options: dict, initial_agent_poses=sapien.Pose(p=[-0.615, 0, 0]), build_separate: bool = True):
+        super()._load_agent(options, initial_agent_poses=initial_agent_poses, build_separate=build_separate)
+
+    def _load_lighting(self, options: dict):
+        for scene in self.scene.sub_scenes:
+            scene.ambient_light = [np.random.uniform(0.2, 0.6), np.random.uniform(0.2, 0.6), np.random.uniform(0.2, 0.6)]
+            scene.add_directional_light(np.random.uniform(-1, 1, 3), [1, 1, 1], shadow=True, shadow_scale=5, shadow_map_size=4096)
+            scene.add_directional_light([0, 0, -1], [1, 1, 1])
+
+    def _load_scene(self, options: dict):
+        '''
+            Custom load_scene where every parallel environment has a different color for the cube.
+        '''
+        ### Table randomization, handled in TableSceneBuilder
+        self.table_scene = TableSceneBuilder(
+            self, robot_init_qpos_noise=self.robot_init_qpos_noise, 
+            custom_table=True, randomize_colors=True
+        )
+        self.table_scene.build()
+
+        ### Cube randomization: Build cubes separately for each parallel environment to enable domain randomization        
+        self._cubes: List[Actor] = []
+        for i in range(self.num_envs):
+            builder = self.scene.create_actor_builder()
+            builder.add_box_collision(half_size=[self.cube_half_size] * 3)
+            builder.add_box_visual(
+                half_size=[self.cube_half_size] * 3, 
+                material=sapien.render.RenderMaterial(
+                    base_color=self._batched_episode_rng[i].uniform(low=0., high=1., size=(3, )).tolist() + [1]
+                )
+            )
+            builder.initial_pose = sapien.Pose(p=[0, 0, self.cube_half_size])
+            builder.set_scene_idxs([i])
+            self._cubes.append(builder.build(name=f"cube_{i}"))
+            self.remove_from_state_dict_registry(self._cubes[-1])  # remove individual cube from state dict
+
+        # Merge all cubes into a single Actor object
+        self.cube = Actor.merge(self._cubes, name="cube")
+        self.add_to_state_dict_registry(self.cube)  # add merged cube to state dict
+
+        ### Agent randomization
+        for link in self.agent.robot.links:
+            for i, obj in enumerate(link._objs):
+                # modify the i-th object which is in parallel environment i
+                
+                # Only modify visual properties, not physics to avoid erratic behavior
+                render_body_component: RenderBodyComponent = obj.entity.find_component_by_type(RenderBodyComponent)
+                if render_body_component is not None:
+                    for render_shape in render_body_component.render_shapes:
+                        for part in render_shape.parts:
+                            # you can change color, use texture files etc.
+                            part.material.set_base_color(self._batched_episode_rng[i].uniform(low=0., high=1., size=(3, )).tolist() + [1])
+                            # note that textures must use the sapien.render.RenderTexture2D 
+                            # object which allows passing a texture image file path
+                            part.material.set_base_color_texture(None)
+                            part.material.set_normal_texture(None)
+                            part.material.set_emission_texture(None)
+                            part.material.set_transmission_texture(None)
+                            part.material.set_metallic_texture(None)
+                            part.material.set_roughness_texture(None)
+
+        ### Non-randomized objects
+        self.goal_site = actors.build_sphere(
+            self.scene,
+            radius=self.goal_thresh,
+            color=[0, 1, 0, 1],
+            name="goal_site",
+            body_type="kinematic",
+            add_collision=False,
+            initial_pose=sapien.Pose(),
+        )
+        self._hidden_objects.append(self.goal_site)
+
+    def _reconfigure(self, options=dict()):
+        """Clean up individual actors created for domain randomization to prevent memory leaks during resets."""
+        if hasattr(self, '_cubes'):
+            # Remove individual cubes from the scene
+            for cube in self._cubes:
+                if hasattr(cube, 'entity') and cube.entity is not None:
+                    self.scene.remove_actor(cube)
+            self._cubes.clear()
+        
+        # Clean up table scene builder if it exists
+        if hasattr(self, 'table_scene'):
+            self.table_scene.cleanup()
+
+        super()._reconfigure(options)
+
+
+class DiscreteInitMixin:
+
+    def __init__(self, *args, grid_dim: int = 10, **kwargs):
+        self.grid_dim = grid_dim  # number of cells per axis (grid_dim x grid_dim)
+        super().__init__(*args, **kwargs)
+
+    def _index_to_xy(self, idx: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        x_grid = idx // self.grid_dim
+        y_grid = idx %  self.grid_dim
+        return x_grid, y_grid
+
+    def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
+        """Place cube and goal according to the unique *environment index*.
+
+        The caller can supply a key ``global_idx`` in *options* containing a
+        1-D list/array/torch.Tensor of length = ``len(env_idx)`` that specifies
+        which global (x, y) cell each parallel environment should correspond
+        to.  If absent, we fall back to the local ``env_idx`` numbering (0…K-1).
+        """
+        with torch.device(self.device):
+            # Resolve the *effective* indices for this reset -------------------
+            if options is not None and "global_idx" in options:
+                gidx = options["global_idx"]
+                if isinstance(gidx, torch.Tensor):
+                    gidx = gidx.to(env_idx.device)
+                else:
+                    gidx = torch.as_tensor(gidx, device=env_idx.device)
+                assert len(gidx) == len(env_idx), "global_idx length mismatch"
+                eff_idx = gidx.long()
+            else:
+                eff_idx = env_idx.long()
+
+            b = len(eff_idx)
+            self.table_scene.initialize(env_idx)
+
+            # Buffer for cube positions (B,3)
+            xyz = torch.zeros((b, 3), device=env_idx.device)
+
+            # Map env-indices → discrete grid coordinates
+            x_grid, y_grid = self._index_to_xy(eff_idx)
+
+            # Equally-spaced centres along one axis (size = grid_dim)
+            lin = torch.linspace(
+                -self.cube_spawn_half_size,
+                 self.cube_spawn_half_size,
+                 self.grid_dim,
+                 device=env_idx.device,
+            )
+
+            # Assign positions and apply centre offset
+            xyz[:, 0] = lin[x_grid] + self.cube_spawn_center[0]
+            xyz[:, 1] = lin[y_grid] + self.cube_spawn_center[1]
+            xyz[:, 2] = self.cube_half_size
+
+            # Random cube orientation (axis-aligned)
+            qs = randomization.random_quaternions(b, lock_x=True, lock_y=True, lock_z=True)
+            self.cube.set_pose(Pose.create_from_pq(xyz, qs))
+
+            # Goal site placed 20 cm above the cube
+            goal_xyz = xyz.clone()
+            goal_xyz[:, 2] = xyz[:, 2] + 0.2
+            self.goal_site.set_pose(Pose.create_from_pq(goal_xyz))
+
+@register_env("TableScanDiscreteInit-v1", max_episode_steps=50)
+class TableScanDiscreteInit(DiscreteInitMixin, TableScanDiscreteInitEnv):
+    def __init__(self, *args, robot_uids="xarm6_robotiq", grid_dim: int = 10, **kwargs):
+        super().__init__(*args, robot_uids=robot_uids, robot_init_qpos_noise=0.0, grid_dim=grid_dim, **kwargs)
+
+@register_env("TableScanDiscreteInitDR-v1", max_episode_steps=50)
+class TableScanDiscreteInitDR(DiscreteInitMixin, TableScanDiscreteInitDR):
+    def __init__(self, *args, robot_uids="xarm6_robotiq", grid_dim: int = 10, **kwargs):
+        super().__init__(*args, robot_uids=robot_uids, robot_init_qpos_noise=0.0, grid_dim=grid_dim, **kwargs)
+    
+    def _load_agent(self, options: dict, initial_agent_poses=sapien.Pose(p=[-0.615, 0, 0]), build_separate: bool = True):
+        super()._load_agent(options, initial_agent_poses=initial_agent_poses, build_separate=build_separate)

@@ -1,4 +1,5 @@
 from .pick_clutter_ycb import PickClutterYCBEnv
+from .pick_ycb_custom import PickYCBCustomEnv
 from .pick_cube import PickCubeEnv
 from .table_scan import TableScanEnv
 from .table_scan_discrete import TableScanDiscreteInitEnv

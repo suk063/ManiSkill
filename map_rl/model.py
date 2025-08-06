@@ -216,7 +216,7 @@ class Agent(nn.Module):
         super().__init__()
         self.feature_net = MapAwareFeatureExtractor(sample_obs=sample_obs, decoder=decoder)
         # self.feature_net = NatureCNN(sample_obs=sample_obs)
-        latent_size = 768
+        latent_size = self.feature_net.out_features
         
         # Critic
         self.critic = nn.Sequential(
