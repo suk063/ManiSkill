@@ -15,8 +15,8 @@ import glob
 parser = argparse.ArgumentParser(description="Scan an object and generate a point cloud.")
 parser.add_argument("-o", "--obs-mode", type=str, default="rgbd", help="Can be rgb or rgb+depth, rgb+normal, albedo+depth etc. Which ever image-like textures you want to visualize can be tacked on")
 parser.add_argument("-n", "--num-envs", type=int, default=100, help="Total number of environments to process (overridden if --grid-dim is given)")
-parser.add_argument("--grid-dim", type=int, default=20, help="If provided, total_envs will be grid_dim^2 and passed to the environment.")
-parser.add_argument("-b", "--batch-size", type=int, default=32, help="How many envs to load at once.")
+parser.add_argument("--grid-dim", type=int, default=15, help="If provided, total_envs will be grid_dim^2 and passed to the environment.")
+parser.add_argument("-b", "--batch-size", type=int, default=30, help="How many envs to load at once.")
 parser.add_argument("-s","--seed",type=int, default=0, help="Seed the random actions and environment. Default is no seed",)
 args = parser.parse_args()
 
@@ -118,8 +118,8 @@ def process_batch(start_idx: int, n_envs: int):
         control_mode="pd_joint_pos",
         reward_mode="none",
     )
-    env.reset(seed=args.seed + start_idx)           # different seed per batch
-    unwrapped = env.unwrapped                       # shortcut
+    env.reset(seed=args.seed)
+    unwrapped = env.unwrapped
 
     pts_batch  = [[] for _ in range(n_envs)]
     rgb_batchc = [[] for _ in range(n_envs)]
@@ -193,10 +193,10 @@ def process_batch(start_idx: int, n_envs: int):
 for start in tqdm(range(0, args.num_envs, args.batch_size), desc="Batches", unit="batch"):
     size = min(args.batch_size, args.num_envs - start)
     try:
-        # 1. Process a batch and get its point cloud data
+        # Process a batch and get its point cloud data
         pts_b, rgb_b = process_batch(start, size)
 
-        # 2. For each environment in the batch, aggregate and save its data immediately
+        # For each environment in the batch, aggregate and save its data immediately
         for li in range(size):
             gi = start + li
             env_dir = DATASET_DIR / f"env_{gi:03d}"
@@ -215,7 +215,7 @@ for start in tqdm(range(0, args.num_envs, args.batch_size), desc="Batches", unit
             pcd.points = o3d.utility.Vector3dVector(points)
             pcd.colors = o3d.utility.Vector3dVector(colors)
             
-            # Optional: Downsample before saving to reduce file size
+            # Downsample before saving to reduce file size -> for mapping we don't use this anyways
             pcd_downsampled = pcd.voxel_down_sample(voxel_size=0.005)
 
             # Save the final point cloud to a file
