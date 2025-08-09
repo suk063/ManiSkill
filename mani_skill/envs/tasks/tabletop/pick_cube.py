@@ -74,7 +74,18 @@ class PickCubeEnv(BaseEnv):
         pose = sapien_utils.look_at(
             eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos
         )
-        return [CameraConfig("base_camera", pose, 84, 84, np.pi / 2, 0.01, 100)]
+        # return [CameraConfig("base_camera", pose, 84, 84, np.pi / 2, 0.01, 100)]
+
+        return [CameraConfig(
+                uid="hand_camera",
+                pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
+                width=84,
+                height=84,
+                fov=np.pi / 2,
+                near=0.01,
+                far=100,
+                mount=self.agent.robot.links_map["camera_link"],
+            )]
 
     @property
     def _default_human_render_camera_configs(self):

@@ -5,8 +5,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from collections import defaultdict
 import random
 import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List
 
 import gymnasium as gym
 import numpy as np
@@ -51,6 +51,8 @@ class Args:
     """the entity (team) of wandb's project"""
     wandb_group: str = "PPO"
     """the group of the run for wandb"""
+    wandb_tags: List[str] = field(default_factory=list)
+    """additional tags for the wandb run"""
     capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     save_model: bool = True
@@ -115,6 +117,23 @@ class Args:
     """the maximum norm for the gradient clipping"""
     target_kl: float = 0.2
     """the target KL divergence threshold"""
+
+    # KL penalty (adaptive)
+    use_kl_penalty: bool = True
+    """if toggled, add KL penalty term to the policy loss and adapt its coef."""
+    kl_coef: float = 1.0
+    """initial coefficient for KL penalty term"""
+    kl_target: float = 0.01
+    """target KL magnitude for adaptive adjustment of kl_coef"""
+    kl_adapt_rate: float = 2.0
+    """multiplicative factor to adjust kl_coef when KL is above/below target"""
+    kl_coef_min: float = 1e-4
+    """lower bound for kl_coef when adapting"""
+    kl_coef_max: float = 10.0
+    """upper bound for kl_coef when adapting"""
+    # Dual-Clip PPO
+    dual_clip: Optional[float] = 2.0
+    """if set, enable Dual-Clip with this coefficient (e.g., 2.0)."""
     reward_scale: float = 1.0
     """Scale the reward by this factor"""
     eval_freq: int = 25
@@ -128,11 +147,11 @@ class Args:
     """Number of cells per axis used for discrete initialisation (N×N grid)."""
 
     # Map-related arguments
-    use_map: bool = True
+    use_map: bool = False
     """if toggled, use the pre-trained environment map features as part of the observation"""
     use_local_fusion: bool = False
     """if toggled, use the local fusion of the image and map features"""
-    vision_encoder: str = "plain_cnn"
+    vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
     map_dir: str = "mapping/multi_env_maps"
     """Directory where the trained environment maps are stored."""
@@ -167,6 +186,13 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # --- Load Maps and Decoder ---
+    # Always define total number of discrete environments
+    total_envs = args.grid_dim ** 2
+    # Placeholders for map-related variables to avoid NameError when use_map is False
+    all_grids = None
+    grid_sampler = None
+    active_indices = None
+    eval_indices = None
     grids, decoder = None, None
     if args.use_map:
         print("--- Loading maps and decoder for PPO training ---")
@@ -206,24 +232,34 @@ if __name__ == "__main__":
         for grid in all_grids:
             for p in grid.parameters():
                 p.requires_grad = False
+        # (sampler is created below in a unified way)
 
-        # Sampler for training
-        grid_sampler = GridSampler(all_grids, args.num_envs if not args.evaluate else 1)
+    # Helper for a fixed random subset for evaluation (always available)
+    def _random_sample_eval(n_envs: int):
+        idx = np.random.choice(total_envs, n_envs, replace=False)
+        return idx
 
-        # Helper for a fixed random subset for evaluation
-        def _random_sample_eval(n_envs: int):
-            idx = np.random.choice(total_envs, n_envs, replace=False)
-            return idx, [all_grids[i] for i in idx]
+    # Create GridSampler once. When not using map, create dummy list of length total_envs
+    batch_train_envs = args.num_envs if not args.evaluate else 1
+    if args.use_map:
+        grid_sampler = GridSampler(all_grids, batch_train_envs)
+    else:
+        # Create a placeholder list to satisfy GridSampler API; we only need indices
+        dummy_list = list(range(total_envs))
+        grid_sampler = GridSampler(dummy_list, batch_train_envs)
 
-        # Initial training/eval subsets
-        active_indices, grids = grid_sampler.sample()
-        eval_indices, eval_grids = _random_sample_eval(args.num_eval_envs)
+    # Initial training/eval subsets
+    active_indices, grids = grid_sampler.sample()
+    if not args.use_map:
+        grids = None
+    eval_indices = _random_sample_eval(args.num_eval_envs)
+    
         
-        # debug: Visualize the first map
-        # if grids and decoder:
-        #     print("--- Visualizing map features for the first environment ---")
-        #     visualize_decoded_features_pca(grids[0], decoder, device=device)
-        #     print("--- Visualization done. Continuing with training/evaluation. ---")
+    # debug: Visualize the first map
+    # if grids and decoder:
+    #     print("--- Visualizing map features for the first environment ---")
+    #     visualize_decoded_features_pca(grids[0], decoder, device=device)
+    #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
     # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda")
@@ -236,6 +272,9 @@ if __name__ == "__main__":
     # rgbd obs mode returns a dict of data, we flatten it so there is just a rgbd key and state key
     envs = FlattenRGBDObservationWrapper(envs, rgb=True, depth=True, state=args.include_state, include_camera_params=True, include_segmentation=True)
     eval_envs = FlattenRGBDObservationWrapper(eval_envs, rgb=True, depth=True, state=args.include_state, include_camera_params=True, include_segmentation=True)
+
+    # visalize segmentation id map
+    # print(envs.unwrapped.segmentation_id_map.items())
 
     if isinstance(envs.action_space, gym.spaces.Dict):
         envs = FlattenActionSpaceWrapper(envs)
@@ -270,7 +309,7 @@ if __name__ == "__main__":
                 name=run_name,
                 save_code=True,
                 group=args.wandb_group,
-                tags=["ppo", "walltime_efficient"]
+                tags=list(args.wandb_tags)
             )
         writer = SummaryWriter(f"runs/{run_name}")
         writer.add_text(
@@ -294,10 +333,10 @@ if __name__ == "__main__":
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed, options={'global_idx': active_indices.tolist()})
     if args.use_map:
-        eval_obs, _ = eval_envs.reset(seed=args.seed, options={'global_idx': eval_indices.tolist()})
+        eval_grids = [all_grids[i] for i in eval_indices]
     else:
         eval_grids = None
-        eval_obs, _ = eval_envs.reset(seed=args.seed)
+    eval_obs, _ = eval_envs.reset(seed=args.seed, options={'global_idx': eval_indices.tolist()})
     next_done = torch.zeros(args.num_envs, device=device)
     print(f"####")
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
@@ -311,6 +350,8 @@ if __name__ == "__main__":
         vision_encoder=args.vision_encoder
     ).to(device)
     optimizer = optim.AdamW(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    # KL penalty coefficient (adaptive)
+    kl_coef = args.kl_coef
 
     if args.checkpoint:
         agent.load_state_dict(torch.load(args.checkpoint))
@@ -321,11 +362,12 @@ if __name__ == "__main__":
         # --------------------------------------------------------------
         # Resample subset of environments for this epoch (train)
         # --------------------------------------------------------------
-        if args.use_map:
-            # Resample next training subset using GridSampler
-            active_indices, grids = grid_sampler.sample()
-            next_obs, _ = envs.reset(options={'global_idx': active_indices.tolist()})
-            next_done = torch.zeros(args.num_envs, device=device)
+        # Resample next training subset using GridSampler
+        active_indices, grids = grid_sampler.sample()
+        if not args.use_map:
+            grids = None
+        next_obs, _ = envs.reset(options={'global_idx': active_indices.tolist()})
+        next_done = torch.zeros(args.num_envs, device=device)
         print(f"Epoch: {iteration}, global_step={global_step}")
         final_values = torch.zeros((args.num_steps, args.num_envs), device=device)
         agent.eval()
@@ -333,10 +375,7 @@ if __name__ == "__main__":
             print("Evaluating")
             stime = time.perf_counter()
             # Use FIXED evaluation subset (eval_indices, eval_grids) sampled once at start
-            if args.use_map:
-                eval_obs, _ = eval_envs.reset(options={'global_idx': eval_indices.tolist()})
-            else:
-                eval_obs, _ = eval_envs.reset()
+            eval_obs, _ = eval_envs.reset(options={'global_idx': eval_indices.tolist()})
             eval_metrics = defaultdict(list)
             num_episodes = 0
             for _ in range(args.num_eval_steps):
@@ -478,6 +517,8 @@ if __name__ == "__main__":
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], map_features=mb_grids, action=b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
+                # differentiable KL approximation for penalty term
+                approx_kl_loss = ((ratio - 1) - logratio).mean()
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
@@ -492,10 +533,15 @@ if __name__ == "__main__":
                 if args.norm_adv:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
-                # Policy loss
+                # Policy loss (with Dual-Clip option)
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                pg_loss_unreduced = torch.max(pg_loss1, pg_loss2)
+                if args.dual_clip is not None:
+                    neg_mask = mb_advantages < 0
+                    dual_bound = -args.dual_clip * mb_advantages
+                    pg_loss_unreduced = torch.where(neg_mask, torch.max(pg_loss_unreduced, dual_bound), pg_loss_unreduced)
+                pg_loss = pg_loss_unreduced.mean()
 
                 # Value loss
                 newvalue = newvalue.view(-1)
@@ -513,7 +559,9 @@ if __name__ == "__main__":
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                # Add KL penalty if enabled
+                kl_term = kl_coef * approx_kl_loss if args.use_kl_penalty else 0.0
+                loss = pg_loss + kl_term - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -522,6 +570,16 @@ if __name__ == "__main__":
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
+        # Adapt KL coefficient once per epoch, using the measured approx_kl
+        if args.use_kl_penalty:
+            try:
+                kl_val = float(approx_kl.item())
+                if kl_val > args.kl_target:
+                    kl_coef = min(kl_coef * args.kl_adapt_rate, args.kl_coef_max)
+                else:
+                    kl_coef = max(kl_coef / args.kl_adapt_rate, args.kl_coef_min)
+            except NameError:
+                pass
         update_time = time.perf_counter() - update_time
         cumulative_times["update_time"] += update_time
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
@@ -534,6 +592,8 @@ if __name__ == "__main__":
         logger.add_scalar("losses/entropy", entropy_loss.item(), global_step)
         logger.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
         logger.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+        if args.use_kl_penalty:
+            logger.add_scalar("losses/kl_coef", kl_coef, global_step)
         logger.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         logger.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
