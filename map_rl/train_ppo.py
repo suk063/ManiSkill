@@ -349,7 +349,24 @@ if __name__ == "__main__":
         use_local_fusion=args.use_local_fusion, 
         vision_encoder=args.vision_encoder
     ).to(device)
-    optimizer = optim.AdamW(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    # Use differential learning rates for DINO backbone vs. the rest
+    if args.vision_encoder == "dino":
+        try:
+            dino_backbone_params = list(agent.feature_net.vision_encoder.backbone.parameters())
+            dino_backbone_param_ids = set(map(id, dino_backbone_params))
+            other_params = [p for p in agent.parameters() if id(p) not in dino_backbone_param_ids]
+            optimizer = optim.AdamW(
+                [
+                    {"params": dino_backbone_params, "lr": 1e-5},
+                    {"params": other_params, "lr": args.learning_rate},
+                ],
+                eps=1e-5,
+            )
+        except AttributeError:
+            # Fallback in case the backbone structure changes
+            optimizer = optim.AdamW(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    else:
+        optimizer = optim.AdamW(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     # KL penalty coefficient (adaptive)
     kl_coef = args.kl_coef
 
