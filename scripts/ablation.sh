@@ -31,32 +31,32 @@ run_cfg() {
     "$@"
 }
 
-# 1) plain-cnn / no map
-run_cfg plain-cnn-no-map \
-  --vision_encoder=plain_cnn
+# # 1) plain-cnn / no map
+# run_cfg plain-cnn-no-map \
+#   --vision_encoder=plain_cnn
 
-# 2) plain-cnn / map / no local fusion
-run_cfg plain-cnn-map-no-local-fusion \
-  --use_map \
-  --vision_encoder=plain_cnn
+# # 2) plain-cnn / map / no local fusion
+# run_cfg plain-cnn-map-no-local-fusion \
+#   --use_map \
+#   --vision_encoder=plain_cnn
 
-# 3) plain-cnn / map / local fusion
-run_cfg plain-cnn-map-local-fusion \
-  --use_map \
-  --use_local_fusion \
-  --vision_encoder=plain_cnn
-
-# 4) dino / no map
-run_cfg dino-no-map \
-  --vision_encoder=dino
+# # 4) dino / no map
+# run_cfg dino-no-map \
+#   --vision_encoder=dino
 
 # 5) dino / map / no local fusion
-run_cfg dino-map-no-local-fusion \
-  --use_map \
-  --vision_encoder=dino
+# run_cfg dino-map-no-local-fusion \
+#   --use_map \
+#   --vision_encoder=dino
 
 # 6) dino / map / local fusion
-run_cfg dino-map-local-fusion \
-  --use_map \
-  --use_local_fusion \
-  --vision_encoder=dino
+# run_cfg dino-map-local-fusion \
+#   --use_map \
+#   --use_local_fusion \
+#   --vision_encoder=dino
+
+#   # 3) plain-cnn / map / local fusion
+# run_cfg plain-cnn-map-local-fusion \
+#   --use_map \
+#   --use_local_fusion \
+#   --vision_encoder=plain_cnn
