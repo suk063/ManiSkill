@@ -50,7 +50,7 @@ class FeatureExtractor(nn.Module):
 
         if self.use_map:
             map_raw_dim = 768  # output dim of *decoder*
-            self.map_encoder = PointNet(3 + map_raw_dim, feature_size)
+            self.map_encoder = PointNet(map_raw_dim, feature_size)
 
             if self.use_local_fusion:
                 self.map_feature_proj = nn.Linear(map_raw_dim, self.vision_encoder.embed_dim)
@@ -149,8 +149,9 @@ class FeatureExtractor(nn.Module):
 
         dec_split = dec_cat.split([c.size(0) for c in coords_batch], dim=0)
 
-        concat = [torch.cat([c, d], dim=-1) for c, d in zip(coords_batch, dec_split)]
-        pad_3d = torch.nn.utils.rnn.pad_sequence(concat, batch_first=True)  # (B, Lmax, 771)
+        # concat = [torch.cat([c, d], dim=-1) for c, d in zip(coords_batch, dec_split)]
+        # pad_3d = torch.nn.utils.rnn.pad_sequence(concat, batch_first=True)  # (B, Lmax, 771)
+        pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)  # (B, Lmax, 768)
         map_vec = self.map_encoder(pad_3d)  # (B, 256)
         encoded.append(map_vec)
 
