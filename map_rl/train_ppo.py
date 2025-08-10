@@ -151,7 +151,7 @@ class Args:
     """Number of cells per axis used for discrete initialisation (N×N grid)."""
 
     # Map-related arguments
-    use_map: bool = False
+    use_map: bool = True
     """if toggled, use the pre-trained environment map features as part of the observation"""
     use_local_fusion: bool = False
     """if toggled, use the local fusion of the image and map features"""
@@ -163,7 +163,7 @@ class Args:
     """Path to the trained shared decoder model."""
 
     # Online mapping arguments
-    use_online_mapping: bool = False
+    use_online_mapping: bool = True
     """if toggled, update the map online based on robot observations"""
     online_map_update_steps: int = 10
     """the number of optimization steps for online map update per observation"""
@@ -508,8 +508,8 @@ if __name__ == "__main__":
             next_obs, reward, terminations, truncations, infos = envs.step(action)
 
             # Online map update
-            if args.use_online_mapping and 'camera_param' in next_obs:
-                update_map_online(next_obs, next_obs['camera_param'], online_grids, clip_model, decoder, map_optimizer, args)
+            if args.use_online_mapping:
+                update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args)
 
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)
             rewards[step] = reward.view(-1) * args.reward_scale

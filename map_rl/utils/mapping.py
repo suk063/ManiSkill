@@ -17,7 +17,7 @@ def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimiz
     Update voxel grids online using a single optimizer for all maps and fully batched processing.
     """
     if not args.use_online_mapping or not grids:
-        return
+        return None
 
     num_envs = len(grids)
     robot_ids_tensor = torch.tensor(args.robot_segmentation_id, device=args.device)
