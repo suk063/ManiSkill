@@ -12,7 +12,7 @@ transform = transforms.Compose(
     ]
 ) 
 
-def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimizer, args):
+def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimizer, args, update_mask=None):
     """
     Update voxel grids online using a single optimizer for all maps and fully batched processing.
     """
@@ -27,7 +27,11 @@ def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimiz
     all_feats_valid = []
     valid_env_indices = []
 
-    for i in range(num_envs):
+    if update_mask is None:
+        update_mask = torch.ones(num_envs, dtype=torch.bool, device=args.device)
+
+    # Iterate over environments that need updates
+    for i in torch.where(update_mask)[0].tolist():
         # Prepare inputs for a single environment
         rgb = obs["rgb"][i].permute(2, 0, 1)
         depth = obs["depth"][i]

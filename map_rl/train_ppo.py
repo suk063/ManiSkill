@@ -165,9 +165,9 @@ class Args:
     # Online mapping arguments
     use_online_mapping: bool = True
     """if toggled, update the map online based on robot observations"""
-    online_map_update_steps: int = 10
+    online_map_update_steps: int = 5
     """the number of optimization steps for online map update per observation"""
-    online_decoder_update_steps: int = 5
+    online_decoder_update_steps: int = 1
     """the number of optimization steps for online decoder update per observation"""
     online_map_lr: float = 1e-3
     """the learning rate for the online map optimizer"""
@@ -428,8 +428,8 @@ if __name__ == "__main__":
         else:
             # For online mapping, create a copy of the grids for this rollout
             if args.use_online_mapping:
-                if initial_decoder_state_dict:
-                    decoder.load_state_dict(initial_decoder_state_dict)
+                # if initial_decoder_state_dict:
+                #     decoder.load_state_dict(initial_decoder_state_dict)
                 online_grids = [grid.clone() for grid in grids]
                 for grid in online_grids:
                     for p in grid.parameters():
@@ -442,6 +442,7 @@ if __name__ == "__main__":
                 map_optimizer = None
 
         next_obs, _ = envs.reset(options={'global_idx': active_indices.tolist()})
+
         next_done = torch.zeros(args.num_envs, device=device)
         print(f"Epoch: {iteration}, global_step={global_step}")
         final_values = torch.zeros((args.num_steps, args.num_envs), device=device)
@@ -454,8 +455,8 @@ if __name__ == "__main__":
 
             # For online mapping during evaluation
             if args.use_online_mapping and args.use_map:
-                if initial_decoder_state_dict:
-                    decoder.load_state_dict(initial_decoder_state_dict)
+                # if initial_decoder_state_dict:
+                #     decoder.load_state_dict(initial_decoder_state_dict)
                 online_eval_grids = [grid.clone() for grid in eval_grids]
                 for grid in online_eval_grids:
                     for p in grid.parameters():
@@ -476,7 +477,10 @@ if __name__ == "__main__":
 
                 # Online map update for evaluation
                 if args.use_online_mapping:
-                    update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args)
+                    is_grasped = eval_infos['is_grasped']
+                    elapsed_steps = eval_infos['elapsed_steps']
+                    update_mask = ~is_grasped & (elapsed_steps < 20)
+                    update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args, update_mask=update_mask)
 
                 if "final_info" in eval_infos:
                     mask = eval_infos["_final_info"]
@@ -523,7 +527,10 @@ if __name__ == "__main__":
 
             # Online map update
             if args.use_online_mapping:
-                update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args)
+                is_grasped = infos['is_grasped']
+                elapsed_steps = infos['elapsed_steps']
+                update_mask = ~is_grasped & (elapsed_steps < 20)
+                update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args, update_mask=update_mask)
 
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)
             rewards[step] = reward.view(-1) * args.reward_scale
