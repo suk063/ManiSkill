@@ -167,6 +167,8 @@ class Args:
     """if toggled, update the map online based on robot observations"""
     online_map_update_steps: int = 10
     """the number of optimization steps for online map update per observation"""
+    online_decoder_update_steps: int = 5
+    """the number of optimization steps for online decoder update per observation"""
     online_map_lr: float = 1e-3
     """the learning rate for the online map optimizer"""
     robot_segmentation_id: List[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])
@@ -222,6 +224,7 @@ if __name__ == "__main__":
     active_indices = None
     eval_indices = None
     grids, decoder = None, None
+    initial_decoder_state_dict = None
     if args.use_map:
         print("--- Loading maps and decoder for PPO training ---")
         # 1. Load Decoder
@@ -232,10 +235,17 @@ if __name__ == "__main__":
                 output_dim=768,
             ).to(device)
             decoder.load_state_dict(torch.load(args.decoder_path, map_location=device))
-            decoder.eval()
-            for param in decoder.parameters():
-                param.requires_grad = False
-            print(f"Loaded shared decoder from {args.decoder_path}")
+            if args.use_online_mapping:
+                decoder.train()
+                for param in decoder.parameters():
+                    param.requires_grad = True
+                initial_decoder_state_dict = {k: v.clone() for k, v in decoder.state_dict().items()}
+                print(f"Loaded shared decoder from {args.decoder_path} for online training.")
+            else:
+                decoder.eval()
+                for param in decoder.parameters():
+                    param.requires_grad = False
+                print(f"Loaded shared decoder from {args.decoder_path}")
         except FileNotFoundError:
             print(f"[ERROR] Decoder file not found at {args.decoder_path}. Exiting.")
             exit()
@@ -418,13 +428,15 @@ if __name__ == "__main__":
         else:
             # For online mapping, create a copy of the grids for this rollout
             if args.use_online_mapping:
+                if initial_decoder_state_dict:
+                    decoder.load_state_dict(initial_decoder_state_dict)
                 online_grids = [grid.clone() for grid in grids]
                 for grid in online_grids:
                     for p in grid.parameters():
                         p.requires_grad = True
-                # Create a single optimizer for all map parameters
+                # Create a single optimizer for all map and decoder parameters
                 all_map_params = [p for grid in online_grids for p in grid.parameters()]
-                map_optimizer = optim.Adam(all_map_params, lr=args.online_map_lr)
+                map_optimizer = optim.Adam(all_map_params + list(decoder.parameters()), lr=args.online_map_lr)
             else:
                 online_grids = grids
                 map_optimizer = None
@@ -442,12 +454,14 @@ if __name__ == "__main__":
 
             # For online mapping during evaluation
             if args.use_online_mapping and args.use_map:
+                if initial_decoder_state_dict:
+                    decoder.load_state_dict(initial_decoder_state_dict)
                 online_eval_grids = [grid.clone() for grid in eval_grids]
                 for grid in online_eval_grids:
                     for p in grid.parameters():
                         p.requires_grad = True
                 all_eval_map_params = [p for grid in online_eval_grids for p in grid.parameters()]
-                eval_map_optimizer = optim.Adam(all_eval_map_params, lr=args.online_map_lr)
+                eval_map_optimizer = optim.Adam(all_eval_map_params + list(decoder.parameters()), lr=args.online_map_lr)
             else:
                 online_eval_grids = eval_grids
                 eval_map_optimizer = None

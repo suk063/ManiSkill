@@ -86,9 +86,14 @@ def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimiz
         return
 
     # --- 2. Batched Optimization Loop ---
-    for _ in range(args.online_map_update_steps):
+    for step in range(args.online_map_update_steps):
+        # Set requires_grad for decoder parameters based on the current step
+        train_decoder = step < args.online_decoder_update_steps
+        for p in decoder.parameters():
+            p.requires_grad = train_decoder
         
         # Collect voxel features from all valid environments into a single batch
+        # This needs to be inside the loop as grid features are updated in every step
         voxel_features_list = [grids[i].query_voxel_feature(all_coords_valid[idx]) for idx, i in enumerate(valid_env_indices)]
         target_features_list = [all_feats_valid[idx] for idx in range(len(valid_env_indices))]
 
@@ -109,3 +114,9 @@ def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimiz
         map_optimizer.zero_grad()
         loss.backward()
         map_optimizer.step()
+
+    # Restore requires_grad for decoder parameters for subsequent operations outside this function
+    for p in decoder.parameters():
+        p.requires_grad = True
+    
+    print(f"cos_sim_loss={loss.item()}")
