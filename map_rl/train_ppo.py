@@ -34,7 +34,7 @@ from utils.mapping import update_map_online
 from mapping.mapping_lib.voxel_hash_table import VoxelHashTable
 from mapping.mapping_lib.implicit_decoder import ImplicitDecoder
 from mapping.mapping_lib.visualization import visualize_decoded_features_pca
-from mapping.mapping_lib.utils import get_visual_features, get_3d_coordinates, transform
+from mapping.mapping_lib.utils import get_visual_features, get_3d_coordinates
 
 
 @dataclass
@@ -200,12 +200,12 @@ if __name__ == "__main__":
     args.device = device
 
     # --- Load CLIP model for online mapping ---
-    clip_model, _, transform = None, None, None
+    clip_model = None
     if args.use_online_mapping:
         print("--- Loading CLIP model for online mapping ---")
         clip_model_name  = "EVA02-L-14"
         clip_weights_id  = "merged2b_s4b_b131k"
-        clip_model, _, transform = open_clip.create_model_and_transforms(
+        clip_model, _, _ = open_clip.create_model_and_transforms(
             clip_model_name, pretrained=clip_weights_id
         )
         clip_model = clip_model.to(device).eval()
@@ -419,6 +419,9 @@ if __name__ == "__main__":
             # For online mapping, create a copy of the grids for this rollout
             if args.use_online_mapping:
                 online_grids = [grid.clone() for grid in grids]
+                for grid in online_grids:
+                    for p in grid.parameters():
+                        p.requires_grad = True
                 # Create a single optimizer for all map parameters
                 all_map_params = [p for grid in online_grids for p in grid.parameters()]
                 map_optimizer = optim.Adam(all_map_params, lr=args.online_map_lr)
@@ -440,6 +443,9 @@ if __name__ == "__main__":
             # For online mapping during evaluation
             if args.use_online_mapping and args.use_map:
                 online_eval_grids = [grid.clone() for grid in eval_grids]
+                for grid in online_eval_grids:
+                    for p in grid.parameters():
+                        p.requires_grad = True
                 all_eval_map_params = [p for grid in online_eval_grids for p in grid.parameters()]
                 eval_map_optimizer = optim.Adam(all_eval_map_params, lr=args.online_map_lr)
             else:
@@ -455,8 +461,8 @@ if __name__ == "__main__":
                 eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
 
                 # Online map update for evaluation
-                if args.use_online_mapping and 'camera_param' in eval_obs:
-                    update_map_online(eval_obs, eval_obs['camera_param'], online_eval_grids, clip_model, transform, decoder, eval_map_optimizer, args)
+                if args.use_online_mapping:
+                    update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args)
 
                 if "final_info" in eval_infos:
                     mask = eval_infos["_final_info"]
@@ -503,7 +509,7 @@ if __name__ == "__main__":
 
             # Online map update
             if args.use_online_mapping and 'camera_param' in next_obs:
-                update_map_online(next_obs, next_obs['camera_param'], online_grids, clip_model, transform, decoder, map_optimizer, args)
+                update_map_online(next_obs, next_obs['camera_param'], online_grids, clip_model, decoder, map_optimizer, args)
 
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)
             rewards[step] = reward.view(-1) * args.reward_scale

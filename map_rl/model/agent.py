@@ -9,6 +9,17 @@ import xformers.ops as xops
 from model.module import PointNet, LocalFeatureFusion, layer_init
 from utils.operator import get_3d_coordinates
 from model.vision_encoder import DINO2DFeatureEncoder, PlainCNNFeatureEncoder
+from torchvision import transforms
+
+transform = transforms.Compose(
+    [
+        transforms.Resize(size=84, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
+        transforms.Normalize(
+            mean=(0.48145466, 0.4578275, 0.40821073),
+            std=(0.26862954, 0.26130258, 0.27577711),
+        ),
+    ]
+) 
 
 class FeatureExtractor(nn.Module):
     def __init__(
@@ -95,7 +106,8 @@ class FeatureExtractor(nn.Module):
         Hf = Wf = 6
         depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
 
-        fx = fy = cx = cy = 42  # TODO: replace with real intrinsics
+        fx = fy = 154.1548
+        cx = cy = 112
         q_xyz, _ = get_3d_coordinates(
             depth_s,
             pose,
@@ -103,11 +115,13 @@ class FeatureExtractor(nn.Module):
             fy=fy,
             cx=cx,
             cy=cy,
-            original_size=(84, 84),
+            original_size=(224, 224),
         )  # B, H, W, 3
 
         q_xyz = q_xyz.permute(0, 2, 3, 1).reshape(B, -1, 3)            # (B, N, 3)
         q_feat = image_fmap.permute(0, 2, 3, 1).reshape(B, -1, self.vision_encoder.embed_dim)     # (B, N, C)
+
+    
 
         fused = self.local_fusion(q_xyz, q_feat, kv_xyz, kv_feat, pad_mask)  # (B, N, C)
         image_fmap = fused.permute(0, 2, 1).reshape(
@@ -128,7 +142,7 @@ class FeatureExtractor(nn.Module):
         if self.state_proj is not None:
             encoded.append(self.state_proj(observations["state"]))
 
-        image = observations["rgb"].float().permute(0, 3, 1, 2) / 255.0
+        image = transform(observations["rgb"].float().permute(0, 3, 1, 2) / 255.0)
         image_fmap = self.vision_encoder(image) # B, C, Hf, Wf
 
         if not self.use_map:

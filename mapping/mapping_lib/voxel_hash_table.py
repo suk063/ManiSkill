@@ -183,6 +183,9 @@ class VoxelHashTable(nn.Module):
         primes = _primes(dev)
         self.levels = nn.ModuleList()
 
+        self.scene_bound_min = scene_bound_min
+        self.scene_bound_max = scene_bound_max
+
         if mode == "train":
             # Iterate coarse → fine by reversing the exponent.
             for lv in range(num_levels):

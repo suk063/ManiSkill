@@ -16,7 +16,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 # local modules
-from mapping_lib.utils import get_visual_features, get_3d_coordinates, transform
+from mapping_lib.utils import get_visual_features, get_3d_coordinates
 from mapping_lib.voxel_hash_table import VoxelHashTable
 from mapping_lib.implicit_decoder import ImplicitDecoder
 
