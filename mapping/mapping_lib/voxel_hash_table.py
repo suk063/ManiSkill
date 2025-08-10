@@ -1,5 +1,6 @@
 import os, torch, torch.nn as nn
 from typing import Tuple, List, Dict, Optional
+from copy import deepcopy
 
 # --------------------------------------------------------------------------- #
 #  small helpers                                                              #
@@ -223,6 +224,14 @@ class VoxelHashTable(nn.Module):
     @torch.no_grad()
     def reset_access_log(self):
         for lv in self.levels: lv.reset_access_log()
+
+    def clone(self):
+        """Create a deep copy of the VoxelHashTable instance."""
+        return deepcopy(self)
+
+    def get_scene_bounds(self):
+        """Return the scene bounds."""
+        return self.scene_bound_min, self.scene_bound_max
 
     # save / load -------------------------------------------------------------
     @torch.no_grad()

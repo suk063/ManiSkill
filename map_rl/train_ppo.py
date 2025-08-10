@@ -16,6 +16,8 @@ import torch.optim as optim
 import tyro
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn.functional as F
+import open_clip
 
 # ManiSkill specific imports
 import mani_skill
@@ -26,11 +28,13 @@ from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 from model.agent import Agent
 from utils.utils import DictArray, GridSampler, Logger, build_checkpoint
+from utils.mapping import update_map_online
 
 # Mapping-related imports
 from mapping.mapping_lib.voxel_hash_table import VoxelHashTable
 from mapping.mapping_lib.implicit_decoder import ImplicitDecoder
 from mapping.mapping_lib.visualization import visualize_decoded_features_pca
+from mapping.mapping_lib.utils import get_visual_features, get_3d_coordinates, transform
 
 
 @dataclass
@@ -158,6 +162,15 @@ class Args:
     decoder_path: str = "mapping/multi_env_maps/shared_decoder.pt"
     """Path to the trained shared decoder model."""
 
+    # Online mapping arguments
+    use_online_mapping: bool = False
+    """if toggled, update the map online based on robot observations"""
+    online_map_update_steps: int = 10
+    """the number of optimization steps for online map update per observation"""
+    online_map_lr: float = 1e-3
+    """the learning rate for the online map optimizer"""
+    robot_segmentation_id: List[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])
+
     # to be filled in runtime
     batch_size: int = 0
     """the batch size (computed in runtime)"""
@@ -184,6 +197,21 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    args.device = device
+
+    # --- Load CLIP model for online mapping ---
+    clip_model, _, transform = None, None, None
+    if args.use_online_mapping:
+        print("--- Loading CLIP model for online mapping ---")
+        clip_model_name  = "EVA02-L-14"
+        clip_weights_id  = "merged2b_s4b_b131k"
+        clip_model, _, transform = open_clip.create_model_and_transforms(
+            clip_model_name, pretrained=clip_weights_id
+        )
+        clip_model = clip_model.to(device).eval()
+        for param in clip_model.parameters():
+            param.requires_grad = False
+        print("--- CLIP model loaded. ---")
 
     # --- Load Maps and Decoder ---
     # Always define total number of discrete environments
@@ -221,11 +249,11 @@ if __name__ == "__main__":
 
         print(f"Loading {total_envs} maps from {args.map_dir} ...")
         for i in range(total_envs):
-            grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.sparse.pt")
+            grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.pt")
             if not os.path.exists(grid_path):
                 print(f"[ERROR] Map file not found: {grid_path}. Exiting.")
                 exit()
-            all_grids.append(VoxelHashTable.load_sparse(grid_path, device=device))
+            all_grids.append(VoxelHashTable.load_dense(grid_path, device=device))
         print(f"--- Loaded {len(all_grids)} maps. ---")
 
         # Freeze any grid parameters to avoid accidental training
@@ -262,8 +290,7 @@ if __name__ == "__main__":
     #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda")
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
+    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
@@ -274,7 +301,12 @@ if __name__ == "__main__":
     eval_envs = FlattenRGBDObservationWrapper(eval_envs, rgb=True, depth=True, state=args.include_state, include_camera_params=True, include_segmentation=True)
 
     # visalize segmentation id map
-    # print(envs.unwrapped.segmentation_id_map.items())
+    # Save segmentation id map to file
+    segmentation_map = dict(envs.unwrapped.segmentation_id_map.items())
+    with open(f"segmentation_id_map.txt", "w") as f:
+        for key, value in segmentation_map.items():
+            f.write(f"{key}: {value}\n")
+    print(f"Segmentation ID map saved to runs/{run_name}/segmentation_id_map.txt")
 
     if isinstance(envs.action_space, gym.spaces.Dict):
         envs = FlattenActionSpaceWrapper(envs)
@@ -383,6 +415,17 @@ if __name__ == "__main__":
         active_indices, grids = grid_sampler.sample()
         if not args.use_map:
             grids = None
+        else:
+            # For online mapping, create a copy of the grids for this rollout
+            if args.use_online_mapping:
+                online_grids = [grid.clone() for grid in grids]
+                # Create a single optimizer for all map parameters
+                all_map_params = [p for grid in online_grids for p in grid.parameters()]
+                map_optimizer = optim.Adam(all_map_params, lr=args.online_map_lr)
+            else:
+                online_grids = grids
+                map_optimizer = None
+
         next_obs, _ = envs.reset(options={'global_idx': active_indices.tolist()})
         next_done = torch.zeros(args.num_envs, device=device)
         print(f"Epoch: {iteration}, global_step={global_step}")
@@ -393,16 +436,33 @@ if __name__ == "__main__":
             stime = time.perf_counter()
             # Use FIXED evaluation subset (eval_indices, eval_grids) sampled once at start
             eval_obs, _ = eval_envs.reset(options={'global_idx': eval_indices.tolist()})
+
+            # For online mapping during evaluation
+            if args.use_online_mapping and args.use_map:
+                online_eval_grids = [grid.clone() for grid in eval_grids]
+                all_eval_map_params = [p for grid in online_eval_grids for p in grid.parameters()]
+                eval_map_optimizer = optim.Adam(all_eval_map_params, lr=args.online_map_lr)
+            else:
+                online_eval_grids = eval_grids
+                eval_map_optimizer = None
+
             eval_metrics = defaultdict(list)
             num_episodes = 0
             for _ in range(args.num_eval_steps):
                 with torch.no_grad():
-                    eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(agent.get_action(eval_obs, map_features=eval_grids if args.use_map else None, deterministic=True))
-                    if "final_info" in eval_infos:
-                        mask = eval_infos["_final_info"]
-                        num_episodes += mask.sum()
-                        for k, v in eval_infos["final_info"]["episode"].items():
-                            eval_metrics[k].append(v)
+                    action = agent.get_action(eval_obs, map_features=online_eval_grids if args.use_map else None, deterministic=True)
+                
+                eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
+
+                # Online map update for evaluation
+                if args.use_online_mapping and 'camera_param' in eval_obs:
+                    update_map_online(eval_obs, eval_obs['camera_param'], online_eval_grids, clip_model, transform, decoder, eval_map_optimizer, args)
+
+                if "final_info" in eval_infos:
+                    mask = eval_infos["_final_info"]
+                    num_episodes += mask.sum()
+                    for k, v in eval_infos["final_info"]["episode"].items():
+                        eval_metrics[k].append(v)
             print(f"Evaluated {args.num_eval_steps * args.num_eval_envs} steps resulting in {num_episodes} episodes")
             for k, v in eval_metrics.items():
                 mean = torch.stack(v).float().mean()
@@ -433,13 +493,18 @@ if __name__ == "__main__":
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs, map_features=grids if args.use_map else None)
+                action, logprob, _, value = agent.get_action_and_value(next_obs, map_features=online_grids if args.use_online_mapping else grids if args.use_map else None)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action)
+
+            # Online map update
+            if args.use_online_mapping and 'camera_param' in next_obs:
+                update_map_online(next_obs, next_obs['camera_param'], online_grids, clip_model, transform, decoder, map_optimizer, args)
+
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)
             rewards[step] = reward.view(-1) * args.reward_scale
 
@@ -464,13 +529,13 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     idx = torch.arange(args.num_envs, device=device)[done_mask]
                     if len(idx) > 0:
-                        final_grids = [grid for i, grid in enumerate(grids) if done_mask[i]] if args.use_map else None
+                        final_grids = [grid for i, grid in enumerate(online_grids if args.use_online_mapping else grids) if done_mask[i]] if args.use_map else None
                         final_values[step, idx] = agent.get_value(final_obs, map_features=final_grids).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
         # bootstrap value according to termination and truncation
         with torch.no_grad():
-            next_value = agent.get_value(next_obs, map_features=grids if args.use_map else None).reshape(1, -1)
+            next_value = agent.get_value(next_obs, map_features=online_grids if args.use_online_mapping else grids if args.use_map else None).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -531,6 +596,9 @@ if __name__ == "__main__":
                 mb_inds = b_inds[start:end]
 
                 mb_grids = [grids[i % args.num_envs] for i in mb_inds] if args.use_map else None
+                if args.use_online_mapping:
+                    mb_grids = [online_grids[i % args.num_envs] for i in mb_inds]
+                
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], map_features=mb_grids, action=b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
