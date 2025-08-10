@@ -165,13 +165,15 @@ class Args:
     # Online mapping arguments
     use_online_mapping: bool = True
     """if toggled, update the map online based on robot observations"""
-    online_map_update_steps: int = 5
+    online_map_update_steps: int = 20
     """the number of optimization steps for online map update per observation"""
-    online_decoder_update_steps: int = 1
+    online_decoder_update_steps: int = 2
     """the number of optimization steps for online decoder update per observation"""
     online_map_lr: float = 1e-3
     """the learning rate for the online map optimizer"""
     robot_segmentation_id: List[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])
+    mapping_time_limit: int = 10
+    """the time limit for mapping"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -479,7 +481,8 @@ if __name__ == "__main__":
                 if args.use_online_mapping:
                     is_grasped = eval_infos['is_grasped']
                     elapsed_steps = eval_infos['elapsed_steps']
-                    update_mask = ~is_grasped & (elapsed_steps < 20)
+                    
+                    update_mask = ~is_grasped & (elapsed_steps < args.mapping_time_limit)
                     update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args, update_mask=update_mask)
 
                 if "final_info" in eval_infos:
@@ -529,7 +532,7 @@ if __name__ == "__main__":
             if args.use_online_mapping:
                 is_grasped = infos['is_grasped']
                 elapsed_steps = infos['elapsed_steps']
-                update_mask = ~is_grasped & (elapsed_steps < 20)
+                update_mask = ~is_grasped & (elapsed_steps < args.mapping_time_limit)
                 update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args, update_mask=update_mask)
 
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)
