@@ -167,7 +167,7 @@ class Args:
     """if toggled, update the map online based on robot observations"""
     online_map_update_steps: int = 20
     """the number of optimization steps for online map update per observation"""
-    online_decoder_update_steps: int = 2
+    online_decoder_update_steps: int = 5
     """the number of optimization steps for online decoder update per observation"""
     online_map_lr: float = 1e-3
     """the learning rate for the online map optimizer"""

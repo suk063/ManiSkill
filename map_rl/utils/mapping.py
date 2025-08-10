@@ -92,7 +92,7 @@ def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimiz
     # --- 2. Batched Optimization Loop ---
     for step in range(args.online_map_update_steps):
         # Set requires_grad for decoder parameters based on the current step
-        train_decoder = step < args.online_decoder_update_steps
+        train_decoder = step >= (args.online_map_update_steps - args.online_decoder_update_steps)
         for p in decoder.parameters():
             p.requires_grad = train_decoder
         
