@@ -135,38 +135,48 @@ class LocalFeatureFusion(nn.Module):
     def __init__(
         self,
         dim: int,
-        n_heads: int = 8,
+        num_layers: int = 1,
         ff_mult: int = 4,
-        radius: float = 0.4,
+        radius: float = 0.24,
         k: int = 8,
         dropout: float = 0.1,
     ):
         super().__init__()
         self.radius, self.k = radius, k
 
-        # PointTransformerConv for local feature aggregation.
-        # It will update q_feat based on nearby kv_feat.
-        pos_nn = MLP([3, dim, dim], plain_last=False, batch_norm=False)
-        attn_nn = MLP([dim, dim], plain_last=False, batch_norm=False) # Maps q - k + pos_emb
+        self.convs = nn.ModuleList()
+        self.ffns = nn.ModuleList()
+        self.norm1s = nn.ModuleList()
+        self.norm2s = nn.ModuleList()
 
-        self.conv = PointTransformerConv(
-            in_channels=dim,
-            out_channels=dim,
-            pos_nn=pos_nn,
-            attn_nn=attn_nn,
-            add_self_loops=False  # This is a bipartite graph
-        )
-        self.norm1 = nn.LayerNorm(dim)
+        for _ in range(num_layers):
+            # PointTransformerConv for local feature aggregation.
+            # It will update q_feat based on nearby kv_feat.
+            pos_nn = MLP([3, dim, dim], plain_last=False, batch_norm=False)
+            attn_nn = MLP([dim, dim], plain_last=False, batch_norm=False) # Maps q - k + pos_emb
 
-        # Feed-forward network
-        self.ffn = nn.Sequential(
-            nn.Linear(dim, dim * ff_mult),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim * ff_mult, dim),
-            nn.Dropout(dropout)
-        )
-        self.norm2 = nn.LayerNorm(dim)
+            self.convs.append(
+                PointTransformerConv(
+                    in_channels=dim,
+                    out_channels=dim,
+                    pos_nn=pos_nn,
+                    attn_nn=attn_nn,
+                    add_self_loops=False  # This is a bipartite graph
+                )
+            )
+            self.norm1s.append(nn.LayerNorm(dim))
+
+            # Feed-forward network
+            self.ffns.append(
+                nn.Sequential(
+                    nn.Linear(dim, dim * ff_mult),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(dim * ff_mult, dim),
+                    nn.Dropout(dropout)
+                )
+            )
+            self.norm2s.append(nn.LayerNorm(dim))
 
 
     def forward(
@@ -182,7 +192,7 @@ class LocalFeatureFusion(nn.Module):
 
         # 1. Convert dense tensors to PyG format (flat vectors + batch indices)
         q_xyz_flat = q_xyz.reshape(-1, 3)
-        q_feat_flat = q_feat.reshape(-1, C)
+        out = q_feat.reshape(-1, C)
         q_batch = torch.arange(B, device=q_xyz.device).repeat_interleave(N)
 
         if kv_pad is not None:
@@ -202,17 +212,18 @@ class LocalFeatureFusion(nn.Module):
 
         edge_index = torch.stack([source_idx, target_idx], dim=0)
 
-        # 3. Apply PointTransformerConv for bipartite cross-attention
-        updated_q_feat = self.conv(
-            x=(kv_feat_flat, q_feat_flat),
-            pos=(kv_xyz_flat, q_xyz_flat),
-            edge_index=edge_index
-        )
+        # 3. Apply layers of PointTransformerConv for bipartite cross-attention
+        for i in range(len(self.convs)):
+            updated_q_feat = self.convs[i](
+                x=(kv_feat_flat, out),
+                pos=(kv_xyz_flat, q_xyz_flat),
+                edge_index=edge_index
+            )
 
-        # 4. Residual connection, FFN, and normalization
-        out = self.norm1(q_feat_flat + updated_q_feat)
-        out2 = self.ffn(out)
-        out = self.norm2(out + out2)
+            # Residual connection, FFN, and normalization
+            out = self.norm1s[i](out + updated_q_feat)
+            out2 = self.ffns[i](out)
+            out = self.norm2s[i](out + out2)
 
         # 5. Convert back to dense tensor (B, N, C)
         final_feat, _ = to_dense_batch(out, q_batch, batch_size=B, max_num_nodes=N)
