@@ -5,7 +5,7 @@ from transforms3d.quaternions import mat2quat
 from typing import List
 import sapien
 from pathlib import Path
-import mani_skill.envs.tasks.tabletop.table_scan_discrete_no_robot
+import mani_skill.envs.tasks.tabletop.pick_ycb_custom_no_robot
 import gymnasium as gym
 import cv2
 import glob
@@ -93,8 +93,7 @@ GRID_ROWS = int(np.ceil(np.sqrt(args.num_envs)))
 K_env0 = None
 
 env = gym.make(
-    "TableScanDiscreteNoRobot-v0",
-    robot_uids="none",
+    "PickYCBCustomNoRobot-v1",
     obs_mode=args.obs_mode,
     num_envs=args.num_envs,
     grid_dim=args.grid_dim if args.grid_dim is not None else 10,

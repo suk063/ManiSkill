@@ -151,9 +151,9 @@ class Args:
     """Number of cells per axis used for discrete initialisation (N×N grid)."""
 
     # Map-related arguments
-    use_map: bool = True
+    use_map: bool = False
     """if toggled, use the pre-trained environment map features as part of the observation"""
-    use_local_fusion: bool = True
+    use_local_fusion: bool = False
     """if toggled, use the local fusion of the image and map features"""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
@@ -163,7 +163,7 @@ class Args:
     """Path to the trained shared decoder model."""
 
     # Online mapping arguments
-    use_online_mapping: bool = True
+    use_online_mapping: bool = False
     """if toggled, update the map online based on robot observations"""
     online_map_update_steps: int = 20
     """the number of optimization steps for online map update per observation"""

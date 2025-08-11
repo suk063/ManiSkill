@@ -50,7 +50,7 @@ htmlcov/
 /mapping/dataset
 /mapping/poses
 /mapping/reloaded_output
-/mapping/multi_env_maps
+/mapping/multi_env_maps*
 /runs/
 /wandb/
 

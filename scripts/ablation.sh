@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 COMMON_ARGS=(
-  --env_id=PickCubeDiscreteInit-v1
+  --env_id=PickCubeDiscreteInit-v1 # PickYCBCustom-v1
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
   --num_envs=50
@@ -40,6 +40,12 @@ run_cfg() {
 #   --use_map \
 #   --vision_encoder=plain_cnn
 
+#   # 3) plain-cnn / map / local fusion
+# run_cfg plain-cnn-map-local-fusion \
+#   --use_map \
+#   --use_local_fusion \
+#   --vision_encoder=plain_cnn
+
 # # 4) dino / no map
 # run_cfg dino-no-map \
 #   --vision_encoder=dino
@@ -55,8 +61,14 @@ run_cfg() {
 #   --use_local_fusion \
 #   --vision_encoder=dino
 
-#   # 3) plain-cnn / map / local fusion
-# run_cfg plain-cnn-map-local-fusion \
+# 7) run_cfg plain-cnn-map-local-fusion-online \
 #   --use_map \
 #   --use_local_fusion \
-#   --vision_encoder=plain_cnn
+#   --vision_encoder=plain_cnn \
+#   --use_online_mapping
+
+# 8) run_cfg dino-map-local-fusion-online \
+#   --use_map \
+#   --use_local_fusion \
+#   --vision_encoder=dino \
+#   --use_online_mapping
