@@ -153,7 +153,7 @@ class Args:
     # Map-related arguments
     use_map: bool = True
     """if toggled, use the pre-trained environment map features as part of the observation"""
-    use_local_fusion: bool = False
+    use_local_fusion: bool = True
     """if toggled, use the local fusion of the image and map features"""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
@@ -172,7 +172,7 @@ class Args:
     online_map_lr: float = 1e-3
     """the learning rate for the online map optimizer"""
     robot_segmentation_id: List[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])
-    mapping_time_limit: int = 10
+    mapping_time_limit: int = 20
     """the time limit for mapping"""
 
     # to be filled in runtime
