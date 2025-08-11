@@ -3,3 +3,4 @@ from .pick_cube import PickCubeEnv
 from .table_scan import TableScanEnv
 from .table_scan_discrete import TableScanDiscreteInitEnv
 from .table_scan_discrete_no_robot import TableScanDiscreteNoRobotEnv
+from .pick_ycb_custom import PickYCBCustomEnv
