@@ -20,7 +20,6 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-
 @register_env("PickYCBCustom-v1", max_episode_steps=50)
 class PickYCBCustomEnv(BaseEnv):
 
@@ -36,18 +35,38 @@ class PickYCBCustomEnv(BaseEnv):
     sensor_cam_target_pos = [-0.1, 0, 0.1]
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
+    model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
 
-    def __init__(self, *args, grid_dim: int = 15, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
+    def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.grid_dim = grid_dim
-        super().__init__(*args, robot_uids=robot_uids, **kwargs)
+        self.init_obj_orientations = {}
+
+        super().__init__(*args, robot_uids=robot_uids, reconfiguration_freq=0, **kwargs)
     
     @property
     def _default_sensor_configs(self):
-        pose = sapien_utils.look_at(
-            eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos
+        base_camera_config = CameraConfig(
+            uid="base_camera", 
+            pose=sapien_utils.look_at(eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos), 
+            width=128, 
+            height=128, 
+            fov=np.pi / 2, 
+            near=0.01, 
+            far=100,
         )
-        return [CameraConfig("base_camera", pose, 128, 128, np.pi / 2, 0.01, 100)]
+
+        hand_camera_config = CameraConfig(
+            uid="hand_camera",
+            pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
+            width=224,
+            height=224,
+            fov=np.pi * 0.4,
+            near=0.01,
+            far=100,
+            mount=self.agent.robot.links_map["camera_link"],
+        )
+        return [base_camera_config, hand_camera_config]
 
     @property
     def _default_human_render_camera_configs(self):
@@ -75,36 +94,38 @@ class PickYCBCustomEnv(BaseEnv):
             initial_pose=sapien.Pose(),
         )
         self._hidden_objects.append(self.goal_site)
-
-        model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
         
         # Create ALL 5 YCB objects for EACH environment
         # Each environment gets its own set of 5 YCB objects
         all_ycb_objects = []
         for env_i in range(self.num_envs):
             env_ycb_objects = []
-            for model_id in model_ids:
+            for model_i, model_id in enumerate(self.model_ids):
                 builder = actors.get_actor_builder(self.scene, id=f"ycb:{model_id}")
                 # Set scene_idxs to only include this environment
                 builder.set_scene_idxs([env_i])
+                # Collision-free initial poses while spawning. Objects will be set to the correct positions when episode is initialized.
+                builder.initial_pose = sapien.Pose(p=[0, 0, 0.1 * (model_i + 1)])
                 env_ycb_objects.append(builder.build(name=f"ycb_{model_id}_env_{env_i}"))
             all_ycb_objects.append(env_ycb_objects)
         
         # Create 5 merged actors, each representing one type of YCB object across all environments
         self.ycb_objects = []
-        for obj_idx in range(len(model_ids)):
+        for obj_idx in range(len(self.model_ids)):
             obj_type_actors = []
             for env_i in range(self.num_envs):
                 obj_type_actors.append(all_ycb_objects[env_i][obj_idx])
-            merged_actor = Actor.merge(obj_type_actors, name=f"ycb_{model_ids[obj_idx]}")
+            merged_actor = Actor.merge(obj_type_actors, name=f"ycb_{self.model_ids[obj_idx]}")
             self.ycb_objects.append(merged_actor)
         
         # Create pick_obj as a merged actor representing the pick objects for all environments
         # For each environment i, the pick object is the (i % 5)th object from that environment's set
         pick_objs = []
+        self.env_target_obj_idx = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
         for i in range(self.num_envs):
-            obj_idx = i % len(model_ids)  # Which object type this environment should pick
+            obj_idx = i % len(self.model_ids)  # Which object type this environment should pick
             env_ycb_obj = all_ycb_objects[i][obj_idx]  # Get the YCB object of that type from this environment
+            self.env_target_obj_idx[i] = obj_idx  # Save the target object index for this environment to be used in the observation
             # Get the entity for this specific environment
             pick_objs.append(env_ycb_obj)  # Only one entity per environment object
         
@@ -122,8 +143,8 @@ class PickYCBCustomEnv(BaseEnv):
         circle_center_y = 0.0 + self.scene_y_offset
         circle_center_z = 0.015 + self.scene_z_offset  # Height above the table
         
-        # Method 4: 2 radii × 10 orderings × 5 angles = 100 unique arrangements
-        radii = torch.tensor([0.18, 0.22], device=self.device)  # Two different circle sizes
+        # 2 radii × 10 orderings × 5 angles = 100 unique arrangements
+        radii = torch.tensor([0.25, 0.28], device=self.device)  # Two different circle sizes
         num_radii = len(radii)
         num_orderings = 10
         num_angles = 5
@@ -146,7 +167,10 @@ class PickYCBCustomEnv(BaseEnv):
         # Apply positions to objects - each merged actor represents one type across all environments
         for obj_idx, obj in enumerate(self.ycb_objects):
             obj_positions = positions[:, obj_idx, :]  # Shape: (b, 3) - positions for this object type across all environments
-            obj.set_pose(Pose.create_from_pq(obj_positions, obj.pose.q))
+            # Reset to saved initial orientations to avoid constant reconfiguration to pick up fallen objects
+            if obj_idx not in self.init_obj_orientations:
+                self.init_obj_orientations[obj_idx] = obj.pose.q
+            obj.set_pose(Pose.create_from_pq(obj_positions, self.init_obj_orientations[obj_idx]))
 
     def _generate_circular_positions_vectorized(self, center_x, center_y, center_z, radius, starting_angle, ordering_idx):
         """Generate circular positions for YCB objects using tensor operations."""
@@ -217,19 +241,20 @@ class PickYCBCustomEnv(BaseEnv):
         }
     
     def _get_obs_extra(self, info: Dict):
-        # # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
-        # obs = dict(
-        #     is_grasped=info["is_grasped"],
-        #     # tcp_pose=self.agent.tcp.pose.raw_pose,
-        #     # goal_pos=self.goal_site.pose.p,
-        # )
-        # if "state" in self.obs_mode:
-        #     obs.update(
-        #         # obj_pose=self.pick_obj.pose.raw_pose,
-        #         tcp_to_obj_pos=self.pick_obj.pose.p - self.agent.tcp_pose.p,
-        #         obj_to_goal_pos=self.goal_site.pose.p - self.pick_obj.pose.p,
-        #     )
-        return {}
+        # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
+        obs = dict(
+            env_target_obj_idx=self.env_target_obj_idx,
+            # is_grasped=info["is_grasped"],
+            # tcp_pose=self.agent.tcp.pose.raw_pose,
+            # goal_pos=self.goal_site.pose.p,
+        )
+        if "state" in self.obs_mode:
+            obs.update(
+                # obj_pose=self.pick_obj.pose.raw_pose,
+                tcp_to_obj_pos=self.pick_obj.pose.p - self.agent.tcp_pose.p,
+                obj_to_goal_pos=self.goal_site.pose.p - self.pick_obj.pose.p,
+            )
+        return obs
 
     def staged_rewards(self, obs: Any, action: torch.Tensor, info: Dict):
         tcp_to_obj_dist = torch.linalg.norm(

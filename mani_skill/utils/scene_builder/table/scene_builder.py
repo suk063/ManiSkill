@@ -91,7 +91,7 @@ class TableSceneBuilder(SceneBuilder):
             table_actor = builder.build_kinematic(name="table-custom")
         return table_actor
     
-    def _build_custom_basket(self, color="orange", table_center_x=0.0, table_center_y=0.0, table_height=0.91964292762787, random_i=-1):
+    def _build_custom_basket(self, color="orange", table_center_x=0.0, table_center_y=0.0, table_surface_z=0.0, random_i=-1):
         """
         Build a custom basket positioned at the center of the table.
         
@@ -99,7 +99,7 @@ class TableSceneBuilder(SceneBuilder):
             color: Color of the basket (used when random_i < 0)
             table_center_x: X coordinate of table center
             table_center_y: Y coordinate of table center  
-            table_height: Height of the table surface
+            table_surface_z: Z coordinate of the table surface
             random_i: Environment index for randomization (-1 for no randomization)
         """
         color_map = {
@@ -148,7 +148,7 @@ class TableSceneBuilder(SceneBuilder):
         
         # Position basket at center of table, on top of the table surface
         # The basket's bottom should sit on the table surface
-        basket_z = table_height + 0.02  # Small offset above table surface
+        basket_z = table_surface_z + 0.02  # Small offset above table surface
         basket_pose = sapien.Pose(
             p=[table_center_x, table_center_y, basket_z],
             q=euler2quat(np.pi/2, 0, 0)  # 90 degree rotation around X-axis to lay basket horizontally
@@ -192,7 +192,7 @@ class TableSceneBuilder(SceneBuilder):
                 self._tables: List[Actor] = []
                 for i in range(self.env.num_envs):
                     self._tables.append(self._build_custom_table(length=1.52, width=0.76, height=self.table_height, random_i=i))
-                    self.env.remove_from_state_dict_registry(self._tables[-1])  # remove individual cube from state dict
+                    self.env.remove_from_state_dict_registry(self._tables[-1])  # remove individual table from state dict
 
                 # Merge all tables into a single Actor object
                 self.table = Actor.merge(self._tables, name="table")
@@ -253,7 +253,7 @@ class TableSceneBuilder(SceneBuilder):
                             color=self.basket_color, 
                             table_center_x=-0.2245382, 
                             table_center_y=0.0, 
-                            table_height=0.0,  # Table surface will be at z=0 after positioning
+                            table_surface_z=0.0,  # Table surface will be at z=0 after positioning
                             random_i=i
                         )
                     else:
@@ -262,7 +262,7 @@ class TableSceneBuilder(SceneBuilder):
                             color=self.basket_color,
                             table_center_x=-0.12,
                             table_center_y=0.0,
-                            table_height=0.0,  # Table surface will be at z=0 after positioning
+                            table_surface_z=0.0,  # Table surface will be at z=0 after positioning
                             random_i=i
                         )
                     self._baskets.append(basket)
@@ -279,7 +279,7 @@ class TableSceneBuilder(SceneBuilder):
                         color=self.basket_color, 
                         table_center_x=-0.2245382, 
                         table_center_y=0.0, 
-                        table_height=0.0  # Table surface will be at z=0 after positioning
+                        table_surface_z=0.0  # Table surface will be at z=0 after positioning
                     )
                 else:
                     # For default GLB table, it's positioned at [-0.12, 0, -0.9196429]
@@ -288,7 +288,7 @@ class TableSceneBuilder(SceneBuilder):
                         color=self.basket_color,
                         table_center_x=-0.12,
                         table_center_y=0.0,
-                        table_height=0.0  # Table surface will be at z=0 after positioning
+                        table_surface_z=0.0  # Table surface will be at z=0 after positioning
                     )
         
         floor_width = 100
