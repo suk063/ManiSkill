@@ -30,12 +30,14 @@ class PickYCBCustomEnv(BaseEnv):
     agent: Union[Panda, XArm6Robotiq]
     
     # Match PickCube configs
-    goal_thresh = 0.025
     sensor_cam_eye_pos = [0.3, 0, 0.6]
     sensor_cam_target_pos = [-0.1, 0, 0.1]
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
     model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
+    # NOTE: Need to check and set these values, potentially set during initialization/load_scene
+    obj_half_size = 0.04
+    basket_half_size = 0.05
 
     def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
@@ -83,18 +85,8 @@ class PickYCBCustomEnv(BaseEnv):
             self, robot_init_qpos_noise=self.robot_init_qpos_noise, custom_table=True, custom_basket=True, basket_color="orange"
         )
         self.table_scene.build()
+        self.basket = self.table_scene.basket
 
-        self.goal_site = actors.build_sphere(
-            self.scene,
-            radius=self.goal_thresh,
-            color=[0, 1, 0, 1],
-            name="goal_site",
-            body_type="kinematic",
-            add_collision=False,
-            initial_pose=sapien.Pose(),
-        )
-        self._hidden_objects.append(self.goal_site)
-        
         # Create ALL 5 YCB objects for EACH environment
         # Each environment gets its own set of 5 YCB objects
         all_ycb_objects = []
@@ -219,25 +211,32 @@ class PickYCBCustomEnv(BaseEnv):
         with torch.device(self.device):
             self.table_scene.initialize(env_idx)
             self._initialize_ycb_objects(env_idx)
-            
-            # Set goal positions based on pick object positions
-            pick_obj_pos = self.pick_obj.pose.p
-            goal_xyz = pick_obj_pos.clone()
-            goal_xyz[:, 2] = pick_obj_pos[:, 2] + 0.2
-            self.goal_site.set_pose(Pose.create_from_pq(goal_xyz))
 
     def evaluate(self):
-        is_obj_placed = (
-            torch.linalg.norm(self.goal_site.pose.p - self.pick_obj.pose.p, axis=1)
-            <= self.goal_thresh
+        pos_obj = self.pick_obj.pose.p
+        pos_basket = self.basket.pose.p
+        offset = pos_obj - pos_basket
+        xy_flag = torch.linalg.norm(offset[..., :2], axis=1) <= 0.005
+        # NOTE: Need to check if these flags are correct
+        entering_basket_z_flag = (
+            offset[..., 2] - self.obj_half_size < self.basket_half_size
         )
-        is_grasped = self.agent.is_grasping(self.pick_obj)
+        placed_in_basket_z_flag = (
+            offset[..., 2] - self.obj_half_size <= 2 * self.basket_half_size
+        )
+        is_obj_entering_basket = torch.logical_and(xy_flag, entering_basket_z_flag)
+        is_obj_placed_in_basket = torch.logical_and(xy_flag, placed_in_basket_z_flag)
+        is_obj_grasped = self.agent.is_grasping(self.pick_obj)
+        is_obj_static = self.pick_obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
         is_robot_static = self.agent.is_static(0.2)
+        success = is_obj_placed_in_basket & is_obj_static & (~is_obj_grasped) & is_robot_static
         return {
-            "success": is_obj_placed & is_robot_static,
-            "is_obj_placed": is_obj_placed,
+            "is_obj_grasped": is_obj_grasped,
+            "is_obj_entering_basket": is_obj_entering_basket,
+            "is_obj_placed_in_basket": is_obj_placed_in_basket,
+            "is_obj_static": is_obj_static,
             "is_robot_static": is_robot_static,
-            "is_grasped": is_grasped,
+            "success": success,
         }
     
     def _get_obs_extra(self, info: Dict):
@@ -246,62 +245,64 @@ class PickYCBCustomEnv(BaseEnv):
             env_target_obj_idx=self.env_target_obj_idx,
             # is_grasped=info["is_grasped"],
             # tcp_pose=self.agent.tcp.pose.raw_pose,
-            # goal_pos=self.goal_site.pose.p,
+            # basket_pos=self.basket.pose.p,
         )
         if "state" in self.obs_mode:
             obs.update(
                 # obj_pose=self.pick_obj.pose.raw_pose,
                 tcp_to_obj_pos=self.pick_obj.pose.p - self.agent.tcp_pose.p,
-                obj_to_goal_pos=self.goal_site.pose.p - self.pick_obj.pose.p,
+                obj_to_basket_pos=self.basket.pose.p - self.pick_obj.pose.p,
             )
         return obs
 
-    def staged_rewards(self, obs: Any, action: torch.Tensor, info: Dict):
-        tcp_to_obj_dist = torch.linalg.norm(
-            self.pick_obj.pose.p - self.agent.tcp.pose.p, axis=1
-        )
-        reaching_reward = 1 - torch.tanh(5 * tcp_to_obj_dist)
-
-        is_grasped = info["is_grasped"]
-
-        obj_to_goal_dist = torch.linalg.norm(
-            self.goal_site.pose.p - self.pick_obj.pose.p, axis=1
-        )
-        place_reward = 1 - torch.tanh(5 * obj_to_goal_dist)
-        place_reward *= is_grasped
-
-        static_reward = 1 - torch.tanh(
-            5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
-        )
-        static_reward *= info["is_obj_placed"]
-
-        return reaching_reward.mean(), is_grasped.mean(), place_reward.mean(), static_reward.mean()
-
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
-        tcp_to_obj_dist = torch.linalg.norm(
-            self.pick_obj.pose.p - self.agent.tcp_pose.p, axis=1
-        )
-        reaching_reward = 1 - torch.tanh(5 * tcp_to_obj_dist)
-        reward = reaching_reward
+        # reaching reward
+        tcp_pose = self.agent.tcp.pose.p
+        obj_pos = self.pick_obj.pose.p
+        obj_to_tcp_dist = torch.linalg.norm(tcp_pose - obj_pos, axis=1)
+        reward = 2 * (1 - torch.tanh(5 * obj_to_tcp_dist))
 
-        is_grasped = info["is_grasped"]
-        reward += is_grasped
+        # grasp and reach basket top reward
+        obj_pos = self.pick_obj.pose.p
+        basket_top_pos = self.basket.pose.p.clone()
+        # NOTE: Need to tune this to get a z value slightly above the basket top
+        basket_top_pos[:, 2] = basket_top_pos[:, 2] + self.basket_half_size
+        obj_to_basket_top_dist = torch.linalg.norm(basket_top_pos - obj_pos, axis=1)
+        reach_basket_top_reward = 1 - torch.tanh(5.0 * obj_to_basket_top_dist)
+        reward[info["is_obj_grasped"]] = (4 + reach_basket_top_reward)[info["is_obj_grasped"]]
 
-        obj_to_goal_dist = torch.linalg.norm(
-            self.goal_site.pose.p - self.pick_obj.pose.p, axis=1
-        )
-        place_reward = 1 - torch.tanh(5 * obj_to_goal_dist)
-        reward += place_reward * is_grasped
+        # NOTE: Need to tune this to get a z value inside the basket
+        basket_inside_pos = self.basket.pose.p.clone()
+        basket_inside_pos[:, 2] = basket_inside_pos[:, 2]
+        obj_to_basket_inside_dist = torch.linalg.norm(basket_inside_pos - obj_pos, axis=1)
+        reach_inside_basket_reward = 1 - torch.tanh(5.0 * obj_to_basket_inside_dist)
+        reward[info["is_obj_entering_basket"]] = (6 + reach_inside_basket_reward)[info["is_obj_entering_basket"]]
 
-        qvel = self.agent.robot.get_qvel()
-        if self.robot_uids in ["panda", "widowxai"]:
-            qvel = qvel[..., :-2]
-        elif self.robot_uids == "so100":
-            qvel = qvel[..., :-1]
-        static_reward = 1 - torch.tanh(5 * torch.linalg.norm(qvel, axis=1))
-        reward += static_reward * info["is_obj_placed"]
+        # ungrasp and static reward
+        is_obj_grasped = info["is_obj_grasped"]
+        ungrasp_reward = self.agent.get_gripper_width()
+        ungrasp_reward[
+            ~is_obj_grasped
+        ] = 1.0
+        v = torch.linalg.norm(self.pick_obj.linear_velocity, axis=1)
+        av = torch.linalg.norm(self.pick_obj.angular_velocity, axis=1)
+        static_reward = 1 - torch.tanh(v * 5 + av)
+        reward[info["is_obj_placed_in_basket"]] = (
+            8 + (ungrasp_reward + static_reward) / 2.0
+        )[info["is_obj_placed_in_basket"]]
 
-        reward[info["success"]] = 5
+        # go up and stay static reward
+        robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), axis=1)
+        robot_static_reward = 1 - torch.tanh(5.0 * robot_qvel)
+        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - self.basket.pose.p, axis=1)
+        reach_basket_top_reward = 1 - torch.tanh(5.0 * tcp_to_basket_top_dist)
+        
+        final_state = info["is_obj_placed_in_basket"] & ~info["is_obj_grasped"]
+        final_state_reward = (robot_static_reward + reach_basket_top_reward) / 2.0
+        reward[final_state] = (10 + final_state_reward)[final_state]
+
+        # success reward
+        reward[info["success"]] = 15
         return reward
 
     def compute_normalized_dense_reward(
