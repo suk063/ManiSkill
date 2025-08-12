@@ -157,9 +157,9 @@ class Args:
     """if toggled, use the local fusion of the image and map features"""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
-    map_dir: str = "mapping/multi_env_maps"
+    map_dir: str = "mapping/multi_env_maps_cube"
     """Directory where the trained environment maps are stored."""
-    decoder_path: str = "mapping/multi_env_maps/shared_decoder.pt"
+    decoder_path: str = "mapping/multi_env_maps_cube/shared_decoder.pt"
     """Path to the trained shared decoder model."""
 
     # Online mapping arguments
@@ -172,8 +172,10 @@ class Args:
     online_map_lr: float = 1e-3
     """the learning rate for the online map optimizer"""
     robot_segmentation_id: List[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])
-    mapping_time_limit: int = 20
-    """the time limit for mapping"""
+    mapping_step_limit: int = 20
+    """the step limit for mapping"""
+    map_update_freq: int = 5
+    """the frequency of online map updates"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -471,7 +473,7 @@ if __name__ == "__main__":
 
             eval_metrics = defaultdict(list)
             num_episodes = 0
-            for _ in range(args.num_eval_steps):
+            for step in range(args.num_eval_steps):
                 with torch.no_grad():
                     action = agent.get_action(eval_obs, map_features=online_eval_grids if args.use_map else None, deterministic=True)
                 
@@ -479,11 +481,10 @@ if __name__ == "__main__":
 
                 # Online map update for evaluation
                 if args.use_online_mapping:
-                    is_grasped = eval_infos['is_grasped']
-                    elapsed_steps = eval_infos['elapsed_steps']
-                    
-                    update_mask = ~is_grasped & (elapsed_steps < args.mapping_time_limit)
-                    update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args, update_mask=update_mask)
+                    if step % args.map_update_freq == 0:
+                        is_grasped = eval_infos['is_grasped']
+                        update_mask = ~is_grasped
+                        update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args, update_mask=update_mask)
 
                 if "final_info" in eval_infos:
                     mask = eval_infos["_final_info"]
@@ -527,13 +528,13 @@ if __name__ == "__main__":
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action)
-
+            
             # Online map update
             if args.use_online_mapping:
-                is_grasped = infos['is_grasped']
-                elapsed_steps = infos['elapsed_steps']
-                update_mask = ~is_grasped & (elapsed_steps < args.mapping_time_limit)
-                update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args, update_mask=update_mask)
+                if step % args.map_update_freq == 0:
+                    is_grasped = infos['is_grasped']
+                    update_mask = ~is_grasped
+                    update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args, update_mask=update_mask)
 
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)
             rewards[step] = reward.view(-1) * args.reward_scale
