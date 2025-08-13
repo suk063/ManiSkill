@@ -482,8 +482,8 @@ if __name__ == "__main__":
                 # Online map update for evaluation
                 if args.use_online_mapping:
                     if step % args.map_update_freq == 0:
-                        is_grasped = eval_infos['is_grasped']
-                        update_mask = ~is_grasped
+                        is_obj_grasped = eval_infos['is_obj_grasped']
+                        update_mask = ~is_obj_grasped
                         update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args, update_mask=update_mask)
 
                 if "final_info" in eval_infos:
@@ -532,8 +532,8 @@ if __name__ == "__main__":
             # Online map update
             if args.use_online_mapping:
                 if step % args.map_update_freq == 0:
-                    is_grasped = infos['is_grasped']
-                    update_mask = ~is_grasped
+                    is_obj_grasped = infos['is_obj_grasped']
+                    update_mask = ~is_obj_grasped
                     update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args, update_mask=update_mask)
 
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)

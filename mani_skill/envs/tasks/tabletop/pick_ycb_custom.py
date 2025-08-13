@@ -20,7 +20,6 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-
 @register_env("PickYCBCustom-v1", max_episode_steps=50)
 class PickYCBCustomEnv(BaseEnv):
 
@@ -31,23 +30,35 @@ class PickYCBCustomEnv(BaseEnv):
     agent: Union[Panda, XArm6Robotiq]
     
     # Match PickCube configs
-    goal_thresh = 0.025
     sensor_cam_eye_pos = [0.3, 0, 0.6]
     sensor_cam_target_pos = [-0.1, 0, 0.1]
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
+    model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
+    # NOTE: Need to check and set these values, potentially set during initialization/load_scene
+    obj_half_size = 0.04
+    basket_half_size = 0.05
 
-    def __init__(self, *args, grid_dim: int = 15, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
+    def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.grid_dim = grid_dim
+        self.init_obj_orientations = {}
+
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
     @property
     def _default_sensor_configs(self):
-        pose = sapien_utils.look_at(
-            eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos
-        )
-        return [CameraConfig(
+        # base_camera_config = CameraConfig(
+        #     uid="base_camera", 
+        #     pose=sapien_utils.look_at(eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos), 
+        #     width=128, 
+        #     height=128, 
+        #     fov=np.pi / 2, 
+        #     near=0.01, 
+        #     far=100,
+        # )
+
+        hand_camera_config = CameraConfig(
             uid="hand_camera",
             pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
             width=224,
@@ -56,7 +67,8 @@ class PickYCBCustomEnv(BaseEnv):
             near=0.01,
             far=100,
             mount=self.agent.robot.links_map["camera_link"],
-        )]
+        )
+        return [hand_camera_config]
 
     @property
     def _default_human_render_camera_configs(self):
@@ -73,47 +85,39 @@ class PickYCBCustomEnv(BaseEnv):
             self, robot_init_qpos_noise=self.robot_init_qpos_noise, custom_table=True, custom_basket=True, basket_color="orange"
         )
         self.table_scene.build()
+        self.basket = self.table_scene.basket
 
-        self.goal_site = actors.build_sphere(
-            self.scene,
-            radius=self.goal_thresh,
-            color=[0, 1, 0, 1],
-            name="goal_site",
-            body_type="kinematic",
-            add_collision=False,
-            initial_pose=sapien.Pose(),
-        )
-        self._hidden_objects.append(self.goal_site)
-
-        model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
-        
         # Create ALL 5 YCB objects for EACH environment
         # Each environment gets its own set of 5 YCB objects
         all_ycb_objects = []
         for env_i in range(self.num_envs):
             env_ycb_objects = []
-            for model_id in model_ids:
+            for model_i, model_id in enumerate(self.model_ids):
                 builder = actors.get_actor_builder(self.scene, id=f"ycb:{model_id}")
                 # Set scene_idxs to only include this environment
                 builder.set_scene_idxs([env_i])
+                # Collision-free initial poses while spawning. Objects will be set to the correct positions when episode is initialized.
+                builder.initial_pose = sapien.Pose(p=[0, 0, 0.1 * (model_i + 1)])
                 env_ycb_objects.append(builder.build(name=f"ycb_{model_id}_env_{env_i}"))
             all_ycb_objects.append(env_ycb_objects)
         
         # Create 5 merged actors, each representing one type of YCB object across all environments
         self.ycb_objects = []
-        for obj_idx in range(len(model_ids)):
+        for obj_idx in range(len(self.model_ids)):
             obj_type_actors = []
             for env_i in range(self.num_envs):
                 obj_type_actors.append(all_ycb_objects[env_i][obj_idx])
-            merged_actor = Actor.merge(obj_type_actors, name=f"ycb_{model_ids[obj_idx]}")
+            merged_actor = Actor.merge(obj_type_actors, name=f"ycb_{self.model_ids[obj_idx]}")
             self.ycb_objects.append(merged_actor)
         
         # Create pick_obj as a merged actor representing the pick objects for all environments
         # For each environment i, the pick object is the (i % 5)th object from that environment's set
         pick_objs = []
+        self.env_target_obj_idx = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
         for i in range(self.num_envs):
-            obj_idx = i % len(model_ids)  # Which object type this environment should pick
+            obj_idx = i % len(self.model_ids)  # Which object type this environment should pick
             env_ycb_obj = all_ycb_objects[i][obj_idx]  # Get the YCB object of that type from this environment
+            self.env_target_obj_idx[i] = obj_idx  # Save the target object index for this environment to be used in the observation
             # Get the entity for this specific environment
             pick_objs.append(env_ycb_obj)  # Only one entity per environment object
         
@@ -131,8 +135,8 @@ class PickYCBCustomEnv(BaseEnv):
         circle_center_y = 0.0 + self.scene_y_offset
         circle_center_z = 0.015 + self.scene_z_offset  # Height above the table
         
-        # Method 4: 2 radii × 10 orderings × 5 angles = 100 unique arrangements
-        radii = torch.tensor([0.18, 0.22], device=self.device)  # Two different circle sizes
+        # 2 radii × 10 orderings × 5 angles = 100 unique arrangements
+        radii = torch.tensor([0.25, 0.28], device=self.device)  # Two different circle sizes
         num_radii = len(radii)
         num_orderings = 10
         num_angles = 5
@@ -155,7 +159,10 @@ class PickYCBCustomEnv(BaseEnv):
         # Apply positions to objects - each merged actor represents one type across all environments
         for obj_idx, obj in enumerate(self.ycb_objects):
             obj_positions = positions[:, obj_idx, :]  # Shape: (b, 3) - positions for this object type across all environments
-            obj.set_pose(Pose.create_from_pq(obj_positions, obj.pose.q))
+            # Reset to saved initial orientations to avoid constant reconfiguration to pick up fallen objects
+            if obj_idx not in self.init_obj_orientations:
+                self.init_obj_orientations[obj_idx] = obj.pose.q
+            obj.set_pose(Pose.create_from_pq(obj_positions, self.init_obj_orientations[obj_idx]))
 
     def _generate_circular_positions_vectorized(self, center_x, center_y, center_z, radius, starting_angle, ordering_idx):
         """Generate circular positions for YCB objects using tensor operations."""
@@ -204,88 +211,98 @@ class PickYCBCustomEnv(BaseEnv):
         with torch.device(self.device):
             self.table_scene.initialize(env_idx)
             self._initialize_ycb_objects(env_idx)
-            
-            # Set goal positions based on pick object positions
-            pick_obj_pos = self.pick_obj.pose.p
-            goal_xyz = pick_obj_pos.clone()
-            goal_xyz[:, 2] = pick_obj_pos[:, 2] + 0.2
-            self.goal_site.set_pose(Pose.create_from_pq(goal_xyz))
 
     def evaluate(self):
-        is_obj_placed = (
-            torch.linalg.norm(self.goal_site.pose.p - self.pick_obj.pose.p, axis=1)
-            <= self.goal_thresh
+        pos_obj = self.pick_obj.pose.p
+        pos_basket = self.basket.pose.p
+        offset = pos_obj - pos_basket
+        xy_flag = torch.linalg.norm(offset[..., :2], axis=1) <= 0.005
+        # NOTE: Need to check if these flags are correct
+        entering_basket_z_flag = (
+            offset[..., 2] - self.obj_half_size < self.basket_half_size
         )
-        is_grasped = self.agent.is_grasping(self.pick_obj)
+        placed_in_basket_z_flag = (
+            offset[..., 2] - self.obj_half_size <= 2 * self.basket_half_size
+        )
+        is_obj_entering_basket = torch.logical_and(xy_flag, entering_basket_z_flag)
+        is_obj_placed_in_basket = torch.logical_and(xy_flag, placed_in_basket_z_flag)
+        is_obj_grasped = self.agent.is_grasping(self.pick_obj)
+        is_obj_static = self.pick_obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
         is_robot_static = self.agent.is_static(0.2)
+        success = is_obj_placed_in_basket & is_obj_static & (~is_obj_grasped) & is_robot_static
         return {
-            "success": is_obj_placed & is_robot_static,
-            "is_obj_placed": is_obj_placed,
+            "is_obj_grasped": is_obj_grasped,
+            "is_obj_entering_basket": is_obj_entering_basket,
+            "is_obj_placed_in_basket": is_obj_placed_in_basket,
+            "is_obj_static": is_obj_static,
             "is_robot_static": is_robot_static,
-            "is_grasped": is_grasped,
+            "success": success,
         }
     
     def _get_obs_extra(self, info: Dict):
-        # # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
-        # obs = dict(
-        #     is_grasped=info["is_grasped"],
-        #     # tcp_pose=self.agent.tcp.pose.raw_pose,
-        #     # goal_pos=self.goal_site.pose.p,
-        # )
-        # if "state" in self.obs_mode:
-        #     obs.update(
-        #         # obj_pose=self.pick_obj.pose.raw_pose,
-        #         tcp_to_obj_pos=self.pick_obj.pose.p - self.agent.tcp_pose.p,
-        #         obj_to_goal_pos=self.goal_site.pose.p - self.pick_obj.pose.p,
-        #     )
-        return {}
-
-    def staged_rewards(self, obs: Any, action: torch.Tensor, info: Dict):
-        tcp_to_obj_dist = torch.linalg.norm(
-            self.pick_obj.pose.p - self.agent.tcp.pose.p, axis=1
+        # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
+        obs = dict(
+            env_target_obj_idx=self.env_target_obj_idx,
+            # is_grasped=info["is_grasped"],
+            # tcp_pose=self.agent.tcp.pose.raw_pose,
+            # basket_pos=self.basket.pose.p,
         )
-        reaching_reward = 1 - torch.tanh(5 * tcp_to_obj_dist)
-
-        is_grasped = info["is_grasped"]
-
-        obj_to_goal_dist = torch.linalg.norm(
-            self.goal_site.pose.p - self.pick_obj.pose.p, axis=1
-        )
-        place_reward = 1 - torch.tanh(5 * obj_to_goal_dist)
-        place_reward *= is_grasped
-
-        static_reward = 1 - torch.tanh(
-            5 * torch.linalg.norm(self.agent.robot.get_qvel()[..., :-2], axis=1)
-        )
-        static_reward *= info["is_obj_placed"]
-
-        return reaching_reward.mean(), is_grasped.mean(), place_reward.mean(), static_reward.mean()
+        if "state" in self.obs_mode:
+            obs.update(
+                # obj_pose=self.pick_obj.pose.raw_pose,
+                tcp_to_obj_pos=self.pick_obj.pose.p - self.agent.tcp_pose.p,
+                obj_to_basket_pos=self.basket.pose.p - self.pick_obj.pose.p,
+            )
+        return obs
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
-        tcp_to_obj_dist = torch.linalg.norm(
-            self.pick_obj.pose.p - self.agent.tcp_pose.p, axis=1
-        )
-        reaching_reward = 1 - torch.tanh(5 * tcp_to_obj_dist)
-        reward = reaching_reward
+        # reaching reward
+        tcp_pose = self.agent.tcp.pose.p
+        obj_pos = self.pick_obj.pose.p
+        obj_to_tcp_dist = torch.linalg.norm(tcp_pose - obj_pos, axis=1)
+        reward = 2 * (1 - torch.tanh(5 * obj_to_tcp_dist))
 
-        is_grasped = info["is_grasped"]
-        reward += is_grasped
+        # grasp and reach basket top reward
+        obj_pos = self.pick_obj.pose.p
+        basket_top_pos = self.basket.pose.p.clone()
+        # NOTE: Need to tune this to get a z value slightly above the basket top
+        basket_top_pos[:, 2] = basket_top_pos[:, 2] + self.basket_half_size
+        obj_to_basket_top_dist = torch.linalg.norm(basket_top_pos - obj_pos, axis=1)
+        reach_basket_top_reward = 1 - torch.tanh(5.0 * obj_to_basket_top_dist)
+        reward[info["is_obj_grasped"]] = (4 + reach_basket_top_reward)[info["is_obj_grasped"]]
 
-        obj_to_goal_dist = torch.linalg.norm(
-            self.goal_site.pose.p - self.pick_obj.pose.p, axis=1
-        )
-        place_reward = 1 - torch.tanh(5 * obj_to_goal_dist)
-        reward += place_reward * is_grasped
+        # NOTE: Need to tune this to get a z value inside the basket
+        basket_inside_pos = self.basket.pose.p.clone()
+        basket_inside_pos[:, 2] = basket_inside_pos[:, 2]
+        obj_to_basket_inside_dist = torch.linalg.norm(basket_inside_pos - obj_pos, axis=1)
+        reach_inside_basket_reward = 1 - torch.tanh(5.0 * obj_to_basket_inside_dist)
+        reward[info["is_obj_entering_basket"]] = (6 + reach_inside_basket_reward)[info["is_obj_entering_basket"]]
 
-        qvel = self.agent.robot.get_qvel()
-        if self.robot_uids in ["panda", "widowxai"]:
-            qvel = qvel[..., :-2]
-        elif self.robot_uids == "so100":
-            qvel = qvel[..., :-1]
-        static_reward = 1 - torch.tanh(5 * torch.linalg.norm(qvel, axis=1))
-        reward += static_reward * info["is_obj_placed"]
+        # ungrasp and static reward
+        is_obj_grasped = info["is_obj_grasped"]
+        ungrasp_reward = self.agent.get_gripper_width()
+        ungrasp_reward[
+            ~is_obj_grasped
+        ] = 1.0
+        v = torch.linalg.norm(self.pick_obj.linear_velocity, axis=1)
+        av = torch.linalg.norm(self.pick_obj.angular_velocity, axis=1)
+        static_reward = 1 - torch.tanh(v * 5 + av)
+        reward[info["is_obj_placed_in_basket"]] = (
+            8 + (ungrasp_reward + static_reward) / 2.0
+        )[info["is_obj_placed_in_basket"]]
 
-        reward[info["success"]] = 5
+        # go up and stay static reward
+        robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), axis=1)
+        robot_static_reward = 1 - torch.tanh(5.0 * robot_qvel)
+        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - self.basket.pose.p, axis=1)
+        reach_basket_top_reward = 1 - torch.tanh(5.0 * tcp_to_basket_top_dist)
+        
+        final_state = info["is_obj_placed_in_basket"] & ~info["is_obj_grasped"]
+        final_state_reward = (robot_static_reward + reach_basket_top_reward) / 2.0
+        reward[final_state] = (10 + final_state_reward)[final_state]
+
+        # success reward
+        reward[info["success"]] = 15
         return reward
 
     def compute_normalized_dense_reward(
