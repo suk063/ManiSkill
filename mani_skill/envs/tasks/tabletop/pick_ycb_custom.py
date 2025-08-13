@@ -249,6 +249,7 @@ class PickYCBCustomEnv(BaseEnv):
         is_robot_static = self.agent.is_static(0.2)
         success = is_obj_placed_in_basket & is_obj_static & (~is_obj_grasped) & is_robot_static
         return {
+            "env_target_obj_idx": self.env_target_obj_idx,
             "is_obj_grasped": is_obj_grasped,
             "is_obj_entering_basket": is_obj_entering_basket,
             "is_obj_placed_in_basket": is_obj_placed_in_basket,
@@ -260,7 +261,7 @@ class PickYCBCustomEnv(BaseEnv):
     def _get_obs_extra(self, info: Dict):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
         obs = dict(
-            env_target_obj_idx=self.env_target_obj_idx,
+            # env_target_obj_idx=self.env_target_obj_idx,
             # is_grasped=info["is_grasped"],
             # tcp_pose=self.agent.tcp.pose.raw_pose,
             # basket_pos=self.basket.pose.p,

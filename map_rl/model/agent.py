@@ -30,6 +30,7 @@ class FeatureExtractor(nn.Module):
             decoder: Optional[nn.Module] = None,
             use_map: bool = True,
             use_local_fusion: bool = False,
+            text_embeddings: Optional[torch.Tensor] = None,
         ) -> None:
         super().__init__()
         
@@ -73,10 +74,16 @@ class FeatureExtractor(nn.Module):
             state_size = sample_obs["state"].shape[-1]
             self.state_proj = nn.Linear(state_size, feature_size)
 
+        self.text_proj = None
+        if text_embeddings is not None:
+            self.text_proj = nn.Linear(text_embeddings.shape[-1], feature_size)
+
         num_branches = 1  # state
         num_branches += 1  # global RGB 
         if self.use_map:
             num_branches += 1  # global map
+        if text_embeddings is not None:
+            num_branches += 1
         self.output_dim = num_branches * feature_size
 
     def _local_fusion(
@@ -134,6 +141,7 @@ class FeatureExtractor(nn.Module):
         self,
         observations: dict,
         map_features: Optional[List] = None,
+        env_target_obj_idx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
     
         B = observations["rgb"].size(0)
@@ -141,6 +149,11 @@ class FeatureExtractor(nn.Module):
 
         if self.state_proj is not None:
             encoded.append(self.state_proj(observations["state"]))
+
+        if self.text_proj is not None:
+            assert env_target_obj_idx is not None, "env_target_obj_idx must be provided when using text embeddings"
+            target_text_embeddings = self.text_embeddings[env_target_obj_idx]
+            encoded.append(self.text_proj(target_text_embeddings))
 
         image = transform(observations["rgb"].float().permute(0, 3, 1, 2) / 255.0)
         image_fmap = self.vision_encoder(image) # B, C, Hf, Wf
@@ -191,15 +204,22 @@ class Agent(nn.Module):
         decoder: Optional[nn.Module] = None, 
         use_map: bool = True, 
         use_local_fusion: bool = False, 
-        vision_encoder: str = "plain_cnn"
+        vision_encoder: str = "plain_cnn",
+        text_embeddings: Optional[torch.Tensor] = None,
     ):
         super().__init__()
+        if text_embeddings is not None:
+            self.register_buffer("text_embeddings", text_embeddings)
+        else:
+            self.text_embeddings = None
+
         self.feature_net = FeatureExtractor(
             sample_obs=sample_obs, 
             decoder=decoder, 
             use_map=use_map, 
             use_local_fusion=use_local_fusion, 
-            vision_encoder=vision_encoder
+            vision_encoder=vision_encoder,
+            text_embeddings=self.text_embeddings,
         )
         latent_size = self.feature_net.output_dim
         
@@ -223,18 +243,19 @@ class Agent(nn.Module):
         self.actor_logstd = nn.Parameter(
             torch.ones(1, int(np.prod(envs.unwrapped.single_action_space.shape))) * -0.5
         )
+        self.feature_net.text_embeddings = self.text_embeddings
 
     # Convenience helpers -----------------------------------------------------
 
-    def get_features(self, x, map_features=None):
-        return self.feature_net(x, map_features=map_features)
+    def get_features(self, x, map_features=None, env_target_obj_idx=None):
+        return self.feature_net(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx)
 
-    def get_value(self, x, map_features=None):
-        x = self.get_features(x, map_features=map_features)
+    def get_value(self, x, map_features=None, env_target_obj_idx=None):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx)
         return self.critic(x)
 
-    def get_action(self, x, map_features=None, deterministic: bool = False):
-        x = self.get_features(x, map_features=map_features)
+    def get_action(self, x, map_features=None, env_target_obj_idx=None, deterministic: bool = False):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx)
         action_mean = self.actor_mean(x)
         if deterministic:
             return action_mean
@@ -243,8 +264,8 @@ class Agent(nn.Module):
         probs = Normal(action_mean, action_std)
         return probs.sample()
 
-    def get_action_and_value(self, x, map_features=None, action=None):
-        x = self.get_features(x, map_features=map_features)
+    def get_action_and_value(self, x, map_features=None, env_target_obj_idx=None, action=None):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx)
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)

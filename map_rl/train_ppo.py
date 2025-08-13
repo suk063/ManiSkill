@@ -146,6 +146,10 @@ class Args:
     """frequency to save training videos in terms of iterations"""
     finite_horizon_gae: bool = False
 
+    # task specification
+    # (NOTE): the order should match the order of the model_ids in the env
+    model_ids: List[str] = field(default_factory=lambda: ["tomato_soup_can", "cracker_box", "mustard_bottle", "apple", "banana"])
+
     # Environment discretisation
     grid_dim: int = 10
     """Number of cells per axis used for discrete initialisation (N×N grid)."""
@@ -205,19 +209,33 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
     args.device = device
 
-    # --- Load CLIP model for online mapping ---
-    clip_model = None
+    # --- Load CLIP model for text and online mapping ---
+    print("--- Loading CLIP model ---")
+    clip_model_name = "EVA02-L-14"
+    clip_weights_id = "merged2b_s4b_b131k"
+    clip_model, _, _ = open_clip.create_model_and_transforms(
+        clip_model_name, pretrained=clip_weights_id
+    )
+    clip_model = clip_model.to(device)
+    
+    # --- Generate text embeddings for model_ids ---
+    text_input = [f"pick up the {s.replace('_', ' ')}" for s in args.model_ids]
+    tokenizer = open_clip.get_tokenizer(clip_model_name)
+    text_tokens = tokenizer(text_input).to(device)
+    with torch.no_grad():
+        text_embeddings = clip_model.encode_text(text_tokens)
+        text_embeddings = F.normalize(text_embeddings, dim=-1, p=2)
+    print("--- Text embeddings generated ---")
+
     if args.use_online_mapping:
-        print("--- Loading CLIP model for online mapping ---")
-        clip_model_name  = "EVA02-L-14"
-        clip_weights_id  = "merged2b_s4b_b131k"
-        clip_model, _, _ = open_clip.create_model_and_transforms(
-            clip_model_name, pretrained=clip_weights_id
-        )
-        clip_model = clip_model.to(device).eval()
+        print("--- Setting CLIP model for online mapping ---")
+        clip_model.eval()
         for param in clip_model.parameters():
             param.requires_grad = False
-        print("--- CLIP model loaded. ---")
+    else:
+        del clip_model, tokenizer
+        clip_model = None
+        print("--- CLIP model removed from memory ---")
 
     # --- Load Maps and Decoder ---
     # Always define total number of discrete environments
@@ -373,16 +391,18 @@ if __name__ == "__main__":
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    env_target_obj_idxs = torch.zeros((args.num_steps, args.num_envs), dtype=torch.long).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, _ = envs.reset(seed=args.seed, options={'global_idx': active_indices.tolist()})
+    next_obs, infos = envs.reset(seed=args.seed, options={'global_idx': active_indices.tolist()})
+    next_env_target_obj_idx = infos['env_target_obj_idx']
     if args.use_map:
         eval_grids = [all_grids[i] for i in eval_indices]
     else:
         eval_grids = None
-    eval_obs, _ = eval_envs.reset(seed=args.seed, options={'global_idx': eval_indices.tolist()})
+    eval_obs, eval_infos = eval_envs.reset(seed=args.seed, options={'global_idx': eval_indices.tolist()})
     next_done = torch.zeros(args.num_envs, device=device)
     print(f"####")
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
@@ -393,7 +413,8 @@ if __name__ == "__main__":
         sample_obs=next_obs, 
         decoder=decoder if args.use_map else None, 
         use_local_fusion=args.use_local_fusion, 
-        vision_encoder=args.vision_encoder
+        vision_encoder=args.vision_encoder,
+        text_embeddings=text_embeddings,
     ).to(device)
     # Use differential learning rates for DINO backbone vs. the rest
     if args.vision_encoder == "dino":
@@ -445,7 +466,7 @@ if __name__ == "__main__":
                 online_grids = grids
                 map_optimizer = None
 
-        next_obs, _ = envs.reset(options={'global_idx': active_indices.tolist()})
+        next_obs, infos = envs.reset(options={'global_idx': active_indices.tolist()})
 
         next_done = torch.zeros(args.num_envs, device=device)
         print(f"Epoch: {iteration}, global_step={global_step}")
@@ -455,7 +476,7 @@ if __name__ == "__main__":
             print("Evaluating")
             stime = time.perf_counter()
             # Use FIXED evaluation subset (eval_indices, eval_grids) sampled once at start
-            eval_obs, _ = eval_envs.reset(options={'global_idx': eval_indices.tolist()})
+            eval_obs, eval_infos = eval_envs.reset(options={'global_idx': eval_indices.tolist()})
 
             # For online mapping during evaluation
             if args.use_online_mapping and args.use_map:
@@ -471,11 +492,22 @@ if __name__ == "__main__":
                 online_eval_grids = eval_grids
                 eval_map_optimizer = None
 
+            # (NOTE): debugging code to save target objects ---
+            target_obj_indices = eval_infos['env_target_obj_idx'].cpu().numpy()
+            target_obj_names = [args.model_ids[i] for i in target_obj_indices]
+            output_path = os.path.join(f"runs/{run_name}", "eval_target_objects.txt")
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, "w") as f:
+                for i, name in enumerate(target_obj_names):
+                    f.write(f"eval_env_{i}: {name}\n")
+            print(f"Saved eval target objects to {output_path}")
+            # --- End of debugging code ---
+
             eval_metrics = defaultdict(list)
             num_episodes = 0
             for step in range(args.num_eval_steps):
                 with torch.no_grad():
-                    action = agent.get_action(eval_obs, map_features=online_eval_grids if args.use_map else None, deterministic=True)
+                    action = agent.get_action(eval_obs, map_features=online_eval_grids if args.use_map else None, env_target_obj_idx=eval_infos['env_target_obj_idx'], deterministic=True)
                 
                 eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
 
@@ -485,6 +517,8 @@ if __name__ == "__main__":
                         is_obj_grasped = eval_infos['is_obj_grasped']
                         update_mask = ~is_obj_grasped
                         update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args, update_mask=update_mask)
+
+                # eval_infos['env_target_obj_idx']
 
                 if "final_info" in eval_infos:
                     mask = eval_infos["_final_info"]
@@ -518,16 +552,20 @@ if __name__ == "__main__":
             global_step += args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
+            env_target_obj_idxs[step] = next_env_target_obj_idx
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs, map_features=online_grids if args.use_online_mapping else grids if args.use_map else None)
+                action, logprob, _, value = agent.get_action_and_value(next_obs, map_features=online_grids if args.use_online_mapping else grids if args.use_map else None, env_target_obj_idx=next_env_target_obj_idx)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action)
+
+            # infos['env_target_obj_idx']
+            next_env_target_obj_idx = infos['env_target_obj_idx']
             
             # Online map update
             if args.use_online_mapping:
@@ -561,12 +599,12 @@ if __name__ == "__main__":
                     idx = torch.arange(args.num_envs, device=device)[done_mask]
                     if len(idx) > 0:
                         final_grids = [grid for i, grid in enumerate(online_grids if args.use_online_mapping else grids) if done_mask[i]] if args.use_map else None
-                        final_values[step, idx] = agent.get_value(final_obs, map_features=final_grids).view(-1)
+                        final_values[step, idx] = agent.get_value(final_obs, map_features=final_grids, env_target_obj_idx=final_info['env_target_obj_idx'][done_mask]).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
         # bootstrap value according to termination and truncation
         with torch.no_grad():
-            next_value = agent.get_value(next_obs, map_features=online_grids if args.use_online_mapping else grids if args.use_map else None).reshape(1, -1)
+            next_value = agent.get_value(next_obs, map_features=online_grids if args.use_online_mapping else grids if args.use_map else None, env_target_obj_idx=next_env_target_obj_idx).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -614,6 +652,7 @@ if __name__ == "__main__":
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
+        b_env_target_obj_idxs = env_target_obj_idxs.reshape(-1)
 
         # Optimizing the policy and value network
         agent.train()
@@ -630,7 +669,7 @@ if __name__ == "__main__":
                 if args.use_online_mapping:
                     mb_grids = [online_grids[i % args.num_envs] for i in mb_inds]
                 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], map_features=mb_grids, action=b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], map_features=mb_grids, env_target_obj_idx=b_env_target_obj_idxs[mb_inds], action=b_actions[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
                 # differentiable KL approximation for penalty term
