@@ -18,7 +18,10 @@ from mani_skill.utils.structs import Actor, GPUMemoryConfig, SimConfig
 
 @register_env("PickYCBCustomNoRobot-v1", max_episode_steps=50)
 class PickYCBCustomNoRobotEnv(BaseEnv):
-    goal_thresh = 0.025
+    model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
+    obj_half_size = 0.04
+    basket_half_size = 0.05
+    
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
 
@@ -30,6 +33,15 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
 
     def __init__(self, *args, grid_dim: int = 15, **kwargs):
         self.grid_dim = grid_dim
+        self.init_obj_orientations = {}
+        self.ycb_half_heights_m = {
+            "005_tomato_soup_can": 0.101 / 2.0,
+            "003_cracker_box":     0.210 / 2.0,
+            "006_mustard_bottle":  0.175 / 2.0,
+            "013_apple":           0.07 / 2.0,
+            "011_banana":          0.045 / 2.0,
+        }
+        self.spawn_z_clearance = 0.001
         super().__init__(*args, robot_uids=[], **kwargs)
 
     @property
@@ -52,61 +64,39 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
             self, robot_init_qpos_noise=0.0, custom_table=True, custom_basket=True, basket_color="orange"
         )
         self.table_scene.build()
+        self.basket = self.table_scene.basket
         self.cam_mount = self.scene.create_actor_builder().build_kinematic("camera_mount")
 
-        self.goal_site = actors.build_sphere(
-            self.scene,
-            radius=self.goal_thresh,
-            color=[0, 1, 0, 1],
-            name="goal_site",
-            body_type="kinematic",
-            add_collision=False,
-            initial_pose=sapien.Pose(),
-        )
-        self._hidden_objects.append(self.goal_site)
-
-        model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
-
-        self._ycb_actors: List[Actor] = []
         all_ycb_objects = []
         for env_i in range(self.num_envs):
             env_ycb_objects = []
-            for model_id in model_ids:
+            for model_i, model_id in enumerate(self.model_ids):
                 builder = actors.get_actor_builder(self.scene, id=f"ycb:{model_id}")
                 builder.set_scene_idxs([env_i])
-                actor = builder.build(name=f"ycb_{model_id}_env_{env_i}")
-                env_ycb_objects.append(actor)
-                self._ycb_actors.append(actor)
+                builder.initial_pose = sapien.Pose(p=[0, 0, 0.1 * (model_i + 1)])
+                env_ycb_objects.append(builder.build(name=f"ycb_{model_id}_env_{env_i}"))
             all_ycb_objects.append(env_ycb_objects)
 
         self.ycb_objects = []
-        for obj_idx in range(len(model_ids)):
+        for obj_idx in range(len(self.model_ids)):
             obj_type_actors = []
             for env_i in range(self.num_envs):
                 obj_type_actors.append(all_ycb_objects[env_i][obj_idx])
-            merged_actor = Actor.merge(obj_type_actors, name=f"ycb_{model_ids[obj_idx]}")
+            merged_actor = Actor.merge(obj_type_actors, name=f"ycb_{self.model_ids[obj_idx]}")
             self.ycb_objects.append(merged_actor)
 
         pick_objs = []
+        self.env_target_obj_idx = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
         for i in range(self.num_envs):
-            obj_idx = i % len(model_ids)
+            obj_idx = i % len(self.model_ids)
             env_ycb_obj = all_ycb_objects[i][obj_idx]
+            self.env_target_obj_idx[i] = obj_idx
             pick_objs.append(env_ycb_obj)
 
         self.pick_obj = Actor.merge(pick_objs, name="pick_obj")
 
-    def _reconfigure(self, options=dict()):
-        if hasattr(self, '_ycb_actors'):
-            for actor in self._ycb_actors:
-                if hasattr(actor, 'entity') and actor.entity is not None:
-                    self.scene.remove_actor(actor)
-            self._ycb_actors.clear()
-        if hasattr(self, 'table_scene'):
-            self.table_scene.cleanup()
-        super()._reconfigure(options)
-
-    def _initialize_ycb_objects(self, eff_idx: torch.Tensor):
-        b = len(eff_idx)
+    def _initialize_ycb_objects(self, env_idx: torch.Tensor):
+        b = len(env_idx)
 
         self.scene_x_offset = 0.0
         self.scene_y_offset = 0.0
@@ -114,28 +104,34 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
 
         circle_center_x = -0.2 + self.scene_x_offset
         circle_center_y = 0.0 + self.scene_y_offset
-        circle_center_z = 0.015 + self.scene_z_offset
         
-        radii = torch.tensor([0.18, 0.22], device=self.device)
+        radii = torch.tensor([0.25, 0.28], device=self.device)
         num_radii = len(radii)
         num_orderings = 10
         num_angles = 5
         
-        radius_idx = eff_idx // (num_orderings * num_angles)
-        ordering_idx = (eff_idx % (num_orderings * num_angles)) // num_angles
-        angle_idx = eff_idx % num_angles
+        radius_idx = env_idx // (num_orderings * num_angles)
+        ordering_idx = (env_idx % (num_orderings * num_angles)) // num_angles
+        angle_idx = env_idx % num_angles
         
         radius = radii[radius_idx]
         starting_angle = angle_idx * 72
         
         positions = self._generate_circular_positions_vectorized(
-            circle_center_x, circle_center_y, circle_center_z,
+            circle_center_x, circle_center_y, self.scene_z_offset,
             radius, starting_angle, ordering_idx
         )
         
+        for obj_idx, model_id in enumerate(self.model_ids):
+            half_h = self.ycb_half_heights_m.get(model_id, self.obj_half_size)
+            z_val = half_h + self.spawn_z_clearance
+            positions[:, obj_idx, 2] = torch.full((b,), z_val, device=self.device)
+
         for obj_idx, obj in enumerate(self.ycb_objects):
             obj_positions = positions[:, obj_idx, :]
-            obj.set_pose(Pose.create_from_pq(obj_positions, obj.pose.q))
+            if obj_idx not in self.init_obj_orientations:
+                self.init_obj_orientations[obj_idx] = obj.pose.q
+            obj.set_pose(Pose.create_from_pq(obj_positions, self.init_obj_orientations[obj_idx]))
 
     def _generate_circular_positions_vectorized(self, center_x, center_y, center_z, radius, starting_angle, ordering_idx):
         b = len(radius)
@@ -164,29 +160,44 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
-            if options is not None and "global_idx" in options:
-                gidx = options["global_idx"]
-                if isinstance(gidx, torch.Tensor):
-                    gidx = gidx.to(env_idx.device)
-                else:
-                    gidx = torch.as_tensor(gidx, device=env_idx.device)
-                assert len(gidx) == len(env_idx), "global_idx length mismatch"
-                eff_idx = gidx.long()
-            else:
-                eff_idx = env_idx.long()
             self.table_scene.initialize(env_idx)
-            self._initialize_ycb_objects(eff_idx)
-            
-            pick_obj_pos = self.pick_obj.pose.p
-            goal_xyz = pick_obj_pos.clone()
-            goal_xyz[:, 2] = pick_obj_pos[:, 2] + 0.2
-            self.goal_site.set_pose(Pose.create_from_pq(goal_xyz))
+            self._initialize_ycb_objects(env_idx)
 
     def evaluate(self):
-        return {"success": torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)}
+        pos_obj = self.pick_obj.pose.p
+        pos_basket = self.basket.pose.p
+        offset = pos_obj - pos_basket
+        xy_flag = torch.linalg.norm(offset[..., :2], axis=1) <= 0.005
+        
+        entering_basket_z_flag = (
+            offset[..., 2] - self.obj_half_size < self.basket_half_size
+        )
+        placed_in_basket_z_flag = (
+            offset[..., 2] - self.obj_half_size <= 2 * self.basket_half_size
+        )
+        is_obj_entering_basket = torch.logical_and(xy_flag, entering_basket_z_flag)
+        is_obj_placed_in_basket = torch.logical_and(xy_flag, placed_in_basket_z_flag)
+        is_obj_static = self.pick_obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
+        success = is_obj_placed_in_basket & is_obj_static
+
+        return {
+            "is_obj_entering_basket": is_obj_entering_basket,
+            "is_obj_placed_in_basket": is_obj_placed_in_basket,
+            "is_obj_static": is_obj_static,
+            "success": success,
+        }
 
     def _get_obs_extra(self, info: Dict):
-        return {}
+        obs = dict(
+            env_target_obj_idx=self.env_target_obj_idx,
+            basket_pos=self.basket.pose.p,
+        )
+        if "state" in self.obs_mode:
+            obs.update(
+                obj_pose=self.pick_obj.pose.raw_pose,
+                obj_to_basket_pos=self.basket.pose.p - self.pick_obj.pose.p,
+            )
+        return obs
 
     def compute_dense_reward(self, *_, **__):
         return torch.zeros(self.num_envs, device=self.device)

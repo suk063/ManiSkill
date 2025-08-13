@@ -36,13 +36,23 @@ class PickYCBCustomEnv(BaseEnv):
     human_cam_target_pos = [0.0, 0.0, 0.35]
     model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
     # NOTE: Need to check and set these values, potentially set during initialization/load_scene
-    obj_half_size = 0.04
-    basket_half_size = 0.05
+    obj_half_size = 0.025
+    basket_half_size = 0.012
 
     def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.grid_dim = grid_dim
         self.init_obj_orientations = {}
+
+        self.ycb_half_heights_m = {
+            "005_tomato_soup_can": 0.101 / 2.0,
+            "003_cracker_box":     0.210 / 2.0,
+            "006_mustard_bottle":  0.175 / 2.0,
+            "013_apple":           0.07 / 2.0,
+            "011_banana":          0.045 / 2.0,
+        }
+
+        self.spawn_z_clearance = 0.001 
 
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
@@ -98,6 +108,7 @@ class PickYCBCustomEnv(BaseEnv):
                 builder.set_scene_idxs([env_i])
                 # Collision-free initial poses while spawning. Objects will be set to the correct positions when episode is initialized.
                 builder.initial_pose = sapien.Pose(p=[0, 0, 0.1 * (model_i + 1)])
+
                 env_ycb_objects.append(builder.build(name=f"ycb_{model_id}_env_{env_i}"))
             all_ycb_objects.append(env_ycb_objects)
         
@@ -133,7 +144,6 @@ class PickYCBCustomEnv(BaseEnv):
         # Define center of the circular layout
         circle_center_x = -0.2 + self.scene_x_offset  # Center of YCB area
         circle_center_y = 0.0 + self.scene_y_offset
-        circle_center_z = 0.015 + self.scene_z_offset  # Height above the table
         
         # 2 radii × 10 orderings × 5 angles = 100 unique arrangements
         radii = torch.tensor([0.25, 0.28], device=self.device)  # Two different circle sizes
@@ -152,9 +162,17 @@ class PickYCBCustomEnv(BaseEnv):
         
         # Generate circular positions for all environments at once
         positions = self._generate_circular_positions_vectorized(
-            circle_center_x, circle_center_y, circle_center_z,
+            circle_center_x, circle_center_y, self.scene_z_offset,
             radius, starting_angle, ordering_idx
         )
+
+        # ==== CHANGE START: set per-object z using actual half-heights ====
+        # positions: (b, 5, 3); overwrite Z channel for each object type
+        for obj_idx, model_id in enumerate(self.model_ids):
+            half_h = self.ycb_half_heights_m.get(model_id, self.obj_half_size)
+            z_val = half_h + self.spawn_z_clearance
+            # broadcast to batch
+            positions[:, obj_idx, 2] = torch.full((b,), z_val, device=self.device)
         
         # Apply positions to objects - each merged actor represents one type across all environments
         for obj_idx, obj in enumerate(self.ycb_objects):
