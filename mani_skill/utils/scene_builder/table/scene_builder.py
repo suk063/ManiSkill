@@ -148,14 +148,15 @@ class TableSceneBuilder(SceneBuilder):
         
         # Position basket at center of table, on top of the table surface
         # The basket's bottom should sit on the table surface
+        # (sunghwan) (NOTE) move basket toward x axis and rotate 1/4 pi
         basket_z = table_surface_z + 0.001  # Small offset above table surface
         basket_pose = sapien.Pose(
-            p=[table_center_x, table_center_y, basket_z],
+            p=[table_center_x + 0.05, table_center_y, basket_z],
             q=euler2quat(np.pi/2, 0, np.pi * 1 / 4)  # 90 degree rotation around X-axis to lay basket horizontally
         )
         basket_builder.initial_pose = basket_pose
         
-        # (sunghwan) TODO: build static basket to make problem easier
+        # (sunghwan) (NOTE) build static basket to make problem easier
         if random_i >= 0:
             # basket = basket_builder.build(name=f"basket_{random_i}")
             basket = basket_builder.build_static(name=f"basket_{random_i}")
