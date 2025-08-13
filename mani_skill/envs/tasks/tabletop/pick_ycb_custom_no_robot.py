@@ -18,9 +18,9 @@ from mani_skill.utils.structs import Actor, GPUMemoryConfig, SimConfig
 
 @register_env("PickYCBCustomNoRobot-v1", max_episode_steps=50)
 class PickYCBCustomNoRobotEnv(BaseEnv):
-    model_ids = ["005_tomato_soup_can", "003_cracker_box", "006_mustard_bottle", "013_apple", "011_banana"]
-    obj_half_size = 0.04
-    basket_half_size = 0.05
+    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "006_mustard_bottle", "013_apple", "011_banana"]
+    obj_half_size = 0.025
+    basket_half_size = 0.012
     
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
@@ -36,8 +36,8 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
         self.init_obj_orientations = {}
         self.ycb_half_heights_m = {
             "005_tomato_soup_can": 0.101 / 2.0,
-            "003_cracker_box":     0.210 / 2.0,
             "006_mustard_bottle":  0.175 / 2.0,
+            "009_gelatin_box":     0.073 / 2.0,
             "013_apple":           0.07 / 2.0,
             "011_banana":          0.045 / 2.0,
         }
@@ -87,8 +87,12 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
 
         pick_objs = []
         self.env_target_obj_idx = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
+        self.env_target_obj_half_height = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         for i in range(self.num_envs):
             obj_idx = i % len(self.model_ids)
+            model_id = self.model_ids[obj_idx]
+            half_height = self.ycb_half_heights_m[model_id]
+            self.env_target_obj_half_height[i] = half_height
             env_ycb_obj = all_ycb_objects[i][obj_idx]
             self.env_target_obj_idx[i] = obj_idx
             pick_objs.append(env_ycb_obj)
@@ -170,10 +174,10 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
         xy_flag = torch.linalg.norm(offset[..., :2], axis=1) <= 0.005
         
         entering_basket_z_flag = (
-            offset[..., 2] - self.obj_half_size < self.basket_half_size
+            offset[..., 2] - self.env_target_obj_half_height < self.basket_half_size
         )
         placed_in_basket_z_flag = (
-            offset[..., 2] - self.obj_half_size <= 2 * self.basket_half_size
+            offset[..., 2] - self.env_target_obj_half_height <= self.basket_half_size * 0.5
         )
         is_obj_entering_basket = torch.logical_and(xy_flag, entering_basket_z_flag)
         is_obj_placed_in_basket = torch.logical_and(xy_flag, placed_in_basket_z_flag)
@@ -181,6 +185,7 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
         success = is_obj_placed_in_basket & is_obj_static
 
         return {
+            "env_target_obj_idx": self.env_target_obj_idx,
             "is_obj_entering_basket": is_obj_entering_basket,
             "is_obj_placed_in_basket": is_obj_placed_in_basket,
             "is_obj_static": is_obj_static,

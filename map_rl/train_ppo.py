@@ -148,7 +148,7 @@ class Args:
 
     # task specification
     # (NOTE): the order should match the order of the model_ids in the env
-    model_ids: List[str] = field(default_factory=lambda: ["tomato_soup_can", "cracker_box", "mustard_bottle", "apple", "banana"])
+    model_ids: List[str] = field(default_factory=lambda: ["tomato_soup_can", "gelatin_box", "mustard_bottle", "apple", "banana"])
 
     # Environment discretisation
     grid_dim: int = 10
@@ -322,7 +322,8 @@ if __name__ == "__main__":
     #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
+    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
+    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
