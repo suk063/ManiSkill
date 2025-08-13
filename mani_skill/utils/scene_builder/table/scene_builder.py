@@ -155,10 +155,13 @@ class TableSceneBuilder(SceneBuilder):
         )
         basket_builder.initial_pose = basket_pose
         
+        # (sunghwan) TODO: build static basket to make problem easier
         if random_i >= 0:
-            basket = basket_builder.build(name=f"basket_{random_i}")
+            # basket = basket_builder.build(name=f"basket_{random_i}")
+            basket = basket_builder.build_static(name=f"basket_{random_i}")
         else:
-            basket = basket_builder.build(name=f"basket_{color}")
+            # basket = basket_builder.build(name=f"basket_{color}")
+            basket = basket_builder.build_static(name=f"basket_{color}")
         return basket
     
     def _build_custom_wall(self, table_pose: sapien.Pose, length: float):

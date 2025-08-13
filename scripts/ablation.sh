@@ -10,12 +10,13 @@ COMMON_ARGS=(
   --env_id=PickYCBCustom-v1 # PickYCBCustom-v1
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
-  --num_envs=50
+  # --num_envs=50
+  --num_envs=100
   --num_eval_envs=20
   --eval_freq=20
   --total_timesteps=100_000_000
-  --num_steps=100
-  --num_eval_steps=100
+  --num_steps=150
+  --num_eval_steps=150
   --gamma=0.95
   --capture-video
   --track
