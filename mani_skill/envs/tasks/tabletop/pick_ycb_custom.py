@@ -35,9 +35,9 @@ class PickYCBCustomEnv(BaseEnv):
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
     model_ids = ["005_tomato_soup_can", "009_gelatin_box", "024_bowl", "013_apple", "011_banana"]
-    # NOTE: Need to check and set these values, potentially set during initialization/load_scene
+    # (Sunghwan) NOTE: Need to check basket size. It says 0.02689 from obj file but can't trust it.
     obj_half_size = 0.025
-    basket_half_size = 0.02689 / 2.0
+    basket_half_size = 0.06
 
     def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
@@ -236,33 +236,33 @@ class PickYCBCustomEnv(BaseEnv):
             self.table_scene.initialize(env_idx)
             self._initialize_ycb_objects(env_idx)
 
-    def evaluate(self):
-        pos_obj = self.pick_obj.pose.p
-        pos_basket = self.basket.pose.p
-        offset = pos_obj - pos_basket
-        xy_flag = torch.linalg.norm(offset[..., :2], axis=1) <= 0.005
-        # NOTE: Need to check if these flags are correct
-        entering_basket_z_flag = (
-            offset[..., 2] - self.env_target_obj_half_height < self.basket_half_size
-        )
-        placed_in_basket_z_flag = (
-            offset[..., 2] - self.env_target_obj_half_height <= self.basket_half_size * 0.5
-        )
-        is_obj_entering_basket = torch.logical_and(xy_flag, entering_basket_z_flag)
-        is_obj_placed_in_basket = torch.logical_and(xy_flag, placed_in_basket_z_flag)
-        is_obj_grasped = self.agent.is_grasping(self.pick_obj)
-        is_obj_static = self.pick_obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
-        is_robot_static = self.agent.is_static(0.2)
-        success = is_obj_placed_in_basket & is_obj_static & (~is_obj_grasped) & is_robot_static
-        return {
-            "env_target_obj_idx": self.env_target_obj_idx,
-            "is_obj_grasped": is_obj_grasped,
-            "is_obj_entering_basket": is_obj_entering_basket,
-            "is_obj_placed_in_basket": is_obj_placed_in_basket,
-            "is_obj_static": is_obj_static,
-            "is_robot_static": is_robot_static,
-            "success": success,
-        }
+    # def evaluate(self):
+    #     pos_obj = self.pick_obj.pose.p
+    #     pos_basket = self.basket.pose.p
+    #     offset = pos_obj - pos_basket
+    #     xy_flag = torch.linalg.norm(offset[..., :2], axis=1) <= 0.005
+    #     # NOTE: Need to check if these flags are correct
+    #     entering_basket_z_flag = (
+    #         offset[..., 2] - self.env_target_obj_half_height < self.basket_half_size
+    #     )
+    #     placed_in_basket_z_flag = (
+    #         offset[..., 2] - self.env_target_obj_half_height <= self.basket_half_size * 0.5
+    #     )
+    #     is_obj_entering_basket = torch.logical_and(xy_flag, entering_basket_z_flag)
+    #     is_obj_placed_in_basket = torch.logical_and(xy_flag, placed_in_basket_z_flag)
+    #     is_obj_grasped = self.agent.is_grasping(self.pick_obj)
+    #     is_obj_static = self.pick_obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
+    #     is_robot_static = self.agent.is_static(0.2)
+    #     success = is_obj_placed_in_basket & is_obj_static & (~is_obj_grasped) & is_robot_static
+    #     return {
+    #         "env_target_obj_idx": self.env_target_obj_idx,
+    #         "is_obj_grasped": is_obj_grasped,
+    #         "is_obj_entering_basket": is_obj_entering_basket,
+    #         "is_obj_placed_in_basket": is_obj_placed_in_basket,
+    #         "is_obj_static": is_obj_static,
+    #         "is_robot_static": is_robot_static,
+    #         "success": success,
+    #     }
     
     def _get_obs_extra(self, info: Dict):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
@@ -280,56 +280,167 @@ class PickYCBCustomEnv(BaseEnv):
             )
         return obs
 
+    def evaluate(self):
+        """
+        Stage flags and success computed assuming:
+        - self.basket.pose.p is the basket BOTTOM center (x,y at center, z at bottom).
+        - self.basket_half_size is the half-height along z.
+        """
+        # --- Basket geometry from BOTTOM pose ---
+        basket_bottom = self.basket.pose.p                          # (N,3), bottom center
+        basket_height = self.basket_half_size * 2.0                 # interpret half_size as half-height
+        rim_z  = basket_bottom[:, 2] + basket_height                # top rim z = bottom z + height
+        base_z = basket_bottom[:, 2]                                # basket bottom z
+        center_xy = basket_bottom[:, :2]                            # same XY for bottom and center
+        inner_radius = self.basket_half_size * 0.85                 # loose inner radius (tune as needed)
+
+        # --- Object geometry ---
+        pos_obj = self.pick_obj.pose.p                              # (N,3) object center
+        obj_bottom_z = pos_obj[:, 2] - self.env_target_obj_half_height
+        xy_dist = torch.linalg.norm((pos_obj[:, :2] - center_xy), dim=1)
+        xy_ok = (xy_dist <= inner_radius)
+
+        # --- Stage flags (z-based, unambiguous) ---
+        # entering: object bottom is at/above the rim zone while XY is inside
+        is_obj_entering_basket = xy_ok & (obj_bottom_z >= rim_z - 0.01)
+        # inside: object bottom passed below the rim (i.e., inside the basket)
+        is_obj_placed_in_basket = xy_ok & (obj_bottom_z <= rim_z - 0.005)
+        # well_placed: near the basket bottom
+        well_placed = is_obj_placed_in_basket & (obj_bottom_z <= base_z + 0.01)
+
+        # --- Dynamics / robot ---
+        is_obj_grasped = self.agent.is_grasping(self.pick_obj)
+        is_obj_static = self.pick_obj.is_static(lin_thresh=5e-3, ang_thresh=0.3)
+        is_robot_static = self.agent.is_static(0.15)
+
+        # --- Success ---
+        success = well_placed & (~is_obj_grasped) & is_obj_static & is_robot_static
+
+        return {
+            "env_target_obj_idx": self.env_target_obj_idx,
+            "is_obj_grasped": is_obj_grasped,
+            "is_obj_entering_basket": is_obj_entering_basket,
+            "is_obj_placed_in_basket": is_obj_placed_in_basket,
+            "is_obj_static": is_obj_static,
+            "is_robot_static": is_robot_static,
+            "success": success,
+            # (Optional) debug values:
+            # "obj_bottom_z": obj_bottom_z, "rim_z": rim_z, "base_z": base_z, "xy_dist": xy_dist
+        }
+
+
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
-        # reaching reward
-        tcp_pose = self.agent.tcp.pose.p
-        obj_pos = self.pick_obj.pose.p
-        obj_to_tcp_dist = torch.linalg.norm(tcp_pose - obj_pos, axis=1)
-        reward = 2 * (1 - torch.tanh(5 * obj_to_tcp_dist))
+        """
+        Dense reward shaped for: grasp → LIFT (adaptive clearance) → ABOVE RIM → INSIDE → release & stabilize.
 
-        # grasp and reach basket top reward
-        obj_pos = self.pick_obj.pose.p
-        basket_top_pos = self.basket.pose.p.clone()
-        # NOTE: Need to tune this to get a z value slightly above the basket top
-        basket_top_pos[:, 2] = basket_top_pos[:, 2] + self.basket_half_size
-        obj_to_basket_top_dist = torch.linalg.norm(basket_top_pos - obj_pos, axis=1)
-        reach_basket_top_reward = 1 - torch.tanh(5.0 * obj_to_basket_top_dist)
-        reward[info["is_obj_grasped"]] = (4 + reach_basket_top_reward)[info["is_obj_grasped"]]
+        Geometry assumptions
+        --------------------
+        - self.basket.pose.p is the basket BOTTOM center (x, y at center; z at bottom).
+        - rim_z = base_z + basket_height, where basket_height = 2 * basket_half_size.
+        - lift_clearance is ADAPTIVE: 0.5 * basket_height, clamped to [0.04 m, 0.10 m].
 
-        # NOTE: Need to tune this to get a z value inside the basket
-        basket_inside_pos = self.basket.pose.p.clone()
-        obj_to_basket_inside_dist = torch.linalg.norm(basket_inside_pos - obj_pos, axis=1)
-        reach_inside_basket_reward = 1 - torch.tanh(5.0 * obj_to_basket_inside_dist)
-        reward[info["is_obj_entering_basket"]] = (6 + reach_inside_basket_reward)[info["is_obj_entering_basket"]]
+        Design notes
+        ------------
+        - The SAME lift_clearance is used consistently for: lift reward, "go above rim" gate,
+        and the dragging penalty gate (to discourage XY motion before lifting enough).
+        - Rewards are additive to preserve progress signals.
+        """
+        device = self.device
+        N = self.num_envs
 
-        # ungrasp and static reward
-        is_obj_grasped = info["is_obj_grasped"]
-        ungrasp_reward = self.agent.get_gripper_width()
-        ungrasp_reward[
-            ~is_obj_grasped
-        ] = 1.0
-        v = torch.linalg.norm(self.pick_obj.linear_velocity, axis=1)
-        av = torch.linalg.norm(self.pick_obj.angular_velocity, axis=1)
-        static_reward = 1 - torch.tanh(v * 5 + av)
-        reward[info["is_obj_placed_in_basket"]] = (
-            8 + (ungrasp_reward + static_reward) / 2.0
-        )[info["is_obj_placed_in_basket"]]
+        # --- Basket geometry (from BOTTOM pose) ---
+        # NOTE (Sunghwan): need to check why self.basket.pose.p is not the bottom center
+        # NOTE (Sunghwan): is basket pose itself is correct?
 
-        # go up and stay static reward
-        robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), axis=1)
-        robot_static_reward = 1 - torch.tanh(5.0 * robot_qvel)
-        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - self.basket.pose.p, axis=1)
-        reach_basket_top_reward = 1 - torch.tanh(5.0 * tcp_to_basket_top_dist)
-        
-        final_state = info["is_obj_placed_in_basket"] & ~info["is_obj_grasped"]
-        final_state_reward = (robot_static_reward + reach_basket_top_reward) / 2.0
-        reward[final_state] = (10 + final_state_reward)[final_state]
+        basket_bottom = self.basket.pose.p                             # (N, 3)
+        base_z = basket_bottom[:, 2]                                   # (N,)
+        # Height per env as a vector (even if half_size is a scalar)
+        basket_height_scalar = float(self.basket_half_size) * 2.0
+        basket_height = torch.full((N,), basket_height_scalar, device=device, dtype=torch.float32)  # (N,)
+        rim_z = base_z + basket_height                                 # (N,)
+        center_xy = basket_bottom[:, :2]                                # (N, 2)
 
-        # success reward
-        reward[info["success"]] = 15
+        # --- Adaptive lift clearance (4 cm ~ 10 cm) ---
+        # 0.5 * basket height gives a sensible per-env margin; clamp for stability.
+        lift_clearance = torch.clamp(basket_height, min=0.04, max=0.10)  # (N,)
+
+        # --- Object / TCP state ---
+        pos_obj = self.pick_obj.pose.p                                  # (N, 3)
+        tcp_pos = self.agent.tcp_pose.p                                  # (N, 3)  (use tcp_pose for compatibility)
+        obj_bottom_z = pos_obj[:, 2] - self.env_target_obj_half_height   # (N,)
+        xy_dist = torch.linalg.norm((pos_obj[:, :2] - center_xy), dim=1) # (N,)
+
+        # --- Stage flags from info ---
+        is_grasped = info["is_obj_grasped"]                              # (N,) bool
+        inside     = info["is_obj_placed_in_basket"]                     # (N,) bool
+        success    = info["success"]                                     # (N,) bool
+
+        # --- Targets (only z is adjusted; XY remains at basket center) ---
+        target_above_rim = basket_bottom.clone()
+        target_above_rim[:, 2] = rim_z + 0.05                           # 5 cm above rim
+        target_inside = basket_bottom.clone()
+        target_inside[:, 2] = base_z + 0.02                             # 2 cm above bottom (avoid snagging)
+
+        # --- Reward accumulator ---
+        reward = torch.zeros(N, device=device, dtype=torch.float32)
+
+        # (1) Reach the object
+        d_tcp_obj = torch.linalg.norm(tcp_pos - pos_obj, dim=1)
+        r_reach = 1.0 - torch.tanh(3.0 * d_tcp_obj)
+        reward += 2.0 * r_reach
+
+        # (2) Discrete grasp bonus
+        reward += 2.0 * is_grasped.float()
+
+        # (3) Lift while grasped (relative to an estimate of the table height)
+        # If table top z is known, use that; here we approximate with the basket bottom z.
+        table_guess_z = base_z                                          # (N,)
+        lift_amount = obj_bottom_z - (table_guess_z + lift_clearance)   # (N,)
+        r_lift = torch.clamp(lift_amount * 30.0, min=0.0)               # scaled linear ramp
+        reward += 2.0 * r_lift * is_grasped.float()
+
+        # (4) Move ABOVE RIM — gate by lift (encourages lifting before moving toward basket)
+        g_lift = torch.sigmoid(20.0 * (obj_bottom_z - (table_guess_z + lift_clearance)))  # (N,)
+        d_obj_to_above_rim = torch.linalg.norm(pos_obj - target_above_rim, dim=1)
+        r_to_above_rim = 1.0 - torch.tanh(3.0 * d_obj_to_above_rim)
+        reward += 2.0 * (g_lift * r_to_above_rim)
+
+        # (5) Go INSIDE (below rim) — gate activates near the rim height
+        g_inside = torch.sigmoid(12.0 * (obj_bottom_z - (rim_z - 0.01)))
+        d_obj_to_inside = torch.linalg.norm(pos_obj - target_inside, dim=1)
+        r_inside = 1.0 - torch.tanh(4.0 * d_obj_to_inside)
+        reward += 3.0 * (g_inside * r_inside)
+
+        # (6) Release & stabilize (only after object is inside and released)
+        v = torch.linalg.norm(self.pick_obj.linear_velocity, dim=1)
+        av = torch.linalg.norm(self.pick_obj.angular_velocity, dim=1)
+        r_obj_static = 1.0 - torch.tanh(5.0 * v + 2.0 * av)
+
+        # Robot joint velocity norm; make shape robust if API returns (D,)
+        qv = getattr(self.agent.robot, "qvel", None)
+        if qv is None:
+            qv = self.agent.robot.get_qvel()
+        if qv.ndim == 1:
+            qv = qv.unsqueeze(0).expand(N, -1)
+        r_robot_static = 1.0 - torch.tanh(5.0 * torch.linalg.norm(qv, dim=1))
+
+        post_release_mask = inside & (~is_grasped)
+        reward += 3.0 * post_release_mask.float() * (0.5 * r_obj_static + 0.5 * r_robot_static)
+
+        # (7) Dragging penalty: discourage moving toward basket (in XY) BEFORE lifting enough
+        g_not_lifted = 1.0 - torch.sigmoid(20.0 * (obj_bottom_z - (table_guess_z + lift_clearance)))
+        near_basket_xy = 1.0 - torch.tanh(5.0 * xy_dist)                # larger when closer in XY
+        drag_penalty = 0.5 * is_grasped.float() * g_not_lifted * near_basket_xy
+        reward -= drag_penalty
+
+        # (8) Final success bonus
+        reward += 8.0 * success.float()
+
         return reward
 
-    def compute_normalized_dense_reward(
-        self, obs: Any, action: torch.Tensor, info: Dict
-    ):
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 5
+
+    def compute_normalized_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
+        """
+        Normalize dense reward to a ~[0, 2] range for stability (adjust the divisor after inspecting logs).
+        """
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 10.0
