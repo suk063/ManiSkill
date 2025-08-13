@@ -34,10 +34,10 @@ class PickYCBCustomEnv(BaseEnv):
     sensor_cam_target_pos = [-0.1, 0, 0.1]
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
-    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "006_mustard_bottle", "013_apple", "011_banana"]
+    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "024_bowl", "013_apple", "011_banana"]
     # NOTE: Need to check and set these values, potentially set during initialization/load_scene
     obj_half_size = 0.025
-    basket_half_size = 0.012
+    basket_half_size = 0.02689 / 2.0
 
     def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
@@ -47,9 +47,10 @@ class PickYCBCustomEnv(BaseEnv):
         self.ycb_half_heights_m = {
             "005_tomato_soup_can": 0.101 / 2.0,
             "006_mustard_bottle":  0.175 / 2.0,
-            "009_gelatin_box":     0.073 / 2.0,
+            "009_gelatin_box":     0.028 / 2.0,
             "013_apple":           0.07 / 2.0,
-            "011_banana":          0.045 / 2.0,
+            "011_banana":          0.036 / 2.0,
+            "024_bowl":            0.053 / 2.0,
         }
 
         self.spawn_z_clearance = 0.001 
@@ -236,6 +237,8 @@ class PickYCBCustomEnv(BaseEnv):
             self._initialize_ycb_objects(env_idx)
 
     def evaluate(self):
+        import pdb; pdb.set_trace()
+
         pos_obj = self.pick_obj.pose.p
         pos_basket = self.basket.pose.p
         offset = pos_obj - pos_basket

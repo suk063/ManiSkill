@@ -148,7 +148,7 @@ class Args:
 
     # task specification
     # (NOTE): the order should match the order of the model_ids in the env
-    model_ids: List[str] = field(default_factory=lambda: ["tomato_soup_can", "gelatin_box", "mustard_bottle", "apple", "banana"])
+    model_ids: List[str] = field(default_factory=lambda: ["tomato_soup_can", "gelatin_box", "bowl", "apple", "banana"])
 
     # Environment discretisation
     grid_dim: int = 10

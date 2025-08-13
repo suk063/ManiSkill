@@ -18,7 +18,7 @@ from mani_skill.utils.structs import Actor, GPUMemoryConfig, SimConfig
 
 @register_env("PickYCBCustomNoRobot-v1", max_episode_steps=50)
 class PickYCBCustomNoRobotEnv(BaseEnv):
-    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "006_mustard_bottle", "013_apple", "011_banana"]
+    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "024_bowl", "013_apple", "011_banana"]
     obj_half_size = 0.025
     basket_half_size = 0.012
     
@@ -37,9 +37,10 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
         self.ycb_half_heights_m = {
             "005_tomato_soup_can": 0.101 / 2.0,
             "006_mustard_bottle":  0.175 / 2.0,
-            "009_gelatin_box":     0.073 / 2.0,
+            "009_gelatin_box":     0.028 / 2.0,
             "013_apple":           0.07 / 2.0,
-            "011_banana":          0.045 / 2.0,
+            "011_banana":          0.036 / 2.0,
+            "024_bowl":            0.053 / 2.0,
         }
         self.spawn_z_clearance = 0.001
         super().__init__(*args, robot_uids=[], **kwargs)

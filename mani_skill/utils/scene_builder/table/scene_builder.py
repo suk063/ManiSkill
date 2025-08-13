@@ -148,7 +148,7 @@ class TableSceneBuilder(SceneBuilder):
         
         # Position basket at center of table, on top of the table surface
         # The basket's bottom should sit on the table surface
-        basket_z = table_surface_z + 0.02  # Small offset above table surface
+        basket_z = table_surface_z + 0.001  # Small offset above table surface
         basket_pose = sapien.Pose(
             p=[table_center_x, table_center_y, basket_z],
             q=euler2quat(np.pi/2, 0, 0)  # 90 degree rotation around X-axis to lay basket horizontally
