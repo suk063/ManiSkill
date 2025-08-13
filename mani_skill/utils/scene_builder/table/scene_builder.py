@@ -134,9 +134,10 @@ class TableSceneBuilder(SceneBuilder):
         basket_mat.roughness = 1.0
         basket_mat.specular = 1.0
         
+        # NOTE (Sunghwan): scale is set to 0.003 for x and y, and 0.006 for z.
         basket_builder.add_visual_from_file(
             self.basket_model_path,
-            scale=[0.003]*3,
+            scale=[0.003, 0.006, 0.003],
             material=basket_mat
         )
         

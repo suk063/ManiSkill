@@ -35,9 +35,8 @@ class PickYCBCustomEnv(BaseEnv):
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
     model_ids = ["005_tomato_soup_can", "009_gelatin_box", "024_bowl", "013_apple", "011_banana"]
-    # (Sunghwan) NOTE: Need to check basket size. It says 0.02689 from obj file but can't trust it.
     obj_half_size = 0.025
-    basket_half_size = 0.06
+    basket_half_size = 0.0807 # 26.9 (original_size) * 0.006 (scale) / 2.0
 
     def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
@@ -443,4 +442,4 @@ class PickYCBCustomEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 2] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 10.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 20.0
