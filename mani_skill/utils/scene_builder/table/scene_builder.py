@@ -138,13 +138,13 @@ class TableSceneBuilder(SceneBuilder):
         basket_builder.add_visual_from_file(
             self.basket_model_path,
             scale=[0.003, 0.006, 0.003],
-            material=basket_mat
+            material=basket_mat,
         )
         
         basket_builder.add_convex_collision_from_file(
             filename=self.basket_model_path,
-            scale=[0.003]*3,
-            density=5000
+            scale=[0.003, 0.006, 0.003],
+            density=100000
         )
         
         # Position basket at center of table, on top of the table surface
