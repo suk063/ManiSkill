@@ -237,8 +237,6 @@ class PickYCBCustomEnv(BaseEnv):
             self._initialize_ycb_objects(env_idx)
 
     def evaluate(self):
-        import pdb; pdb.set_trace()
-
         pos_obj = self.pick_obj.pose.p
         pos_basket = self.basket.pose.p
         offset = pos_obj - pos_basket

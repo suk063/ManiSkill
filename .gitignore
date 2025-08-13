@@ -57,3 +57,4 @@ htmlcov/
 output.log
 run_scripts/
 pretrained/
+playground/
