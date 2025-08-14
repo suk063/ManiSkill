@@ -20,7 +20,7 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-@register_env("PickYCBCustom-v1", max_episode_steps=50)
+@register_env("PickYCBCustom-v1")
 class PickYCBCustomEnv(BaseEnv):
 
     SUPPORTED_ROBOTS = [
@@ -38,7 +38,7 @@ class PickYCBCustomEnv(BaseEnv):
     obj_half_size = 0.025
     basket_half_size = 0.0807 # 26.9 (original_size) * 0.006 (scale) / 2.0
 
-    def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
+    def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, max_episode_steps: int = 200, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.grid_dim = grid_dim
         self.init_obj_orientations = {}
@@ -54,7 +54,7 @@ class PickYCBCustomEnv(BaseEnv):
 
         self.spawn_z_clearance = 0.001 
 
-        super().__init__(*args, robot_uids=robot_uids, **kwargs)
+        super().__init__(*args, robot_uids=robot_uids, max_episode_steps=max_episode_steps, **kwargs)
     
     @property
     def _default_sensor_configs(self):
@@ -293,7 +293,8 @@ class PickYCBCustomEnv(BaseEnv):
 
         # grasp and reach basket top reward
         obj_pos = self.pick_obj.pose.p
-        basket_top_pos = self.basket.pose.p.clone()
+        basket_top_pos = self.basket.pose.p.clone() # [-0.1745, 0, 0.001]
+        
         # NOTE: Need to tune this to get a z value slightly above the basket top
         basket_top_pos[:, 2] = basket_top_pos[:, 2] + 2 * self.basket_half_size
         obj_to_basket_top_dist = torch.linalg.norm(basket_top_pos + 0.03 - obj_pos, axis=1)
