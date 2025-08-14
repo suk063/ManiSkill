@@ -20,7 +20,7 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-@register_env("PickYCBCustom-v1")
+@register_env("PickYCBCustom-v1", max_episode_steps=200)
 class PickYCBCustomEnv(BaseEnv):
 
     SUPPORTED_ROBOTS = [
@@ -38,7 +38,7 @@ class PickYCBCustomEnv(BaseEnv):
     obj_half_size = 0.025
     basket_half_size = 0.0807 # 26.9 (original_size) * 0.006 (scale) / 2.0
 
-    def __init__(self, *args, grid_dim: int = 15, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, max_episode_steps: int = 200, **kwargs):
+    def __init__(self, *args, grid_dim: int = 10, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.grid_dim = grid_dim
         self.init_obj_orientations = {}
