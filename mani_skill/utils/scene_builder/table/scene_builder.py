@@ -115,7 +115,7 @@ class TableSceneBuilder(SceneBuilder):
             "olive":   [0.7372549019607844, 0.7411764705882353, 0.13333333333333333, 1],
             "cyan":    [0.09019607843137255, 0.7450980392156863, 0.8117647058823529, 1],
         }
-        self.basket_model_path = str(PACKAGE_ASSET_DIR / "custom/plastic_basket.obj")
+        self.basket_model_path = str(PACKAGE_ASSET_DIR / "custom/plastic_crate.obj")
 
         basket_builder = self.scene.create_actor_builder()
         basket_mat = sapien.render.RenderMaterial()
@@ -137,23 +137,26 @@ class TableSceneBuilder(SceneBuilder):
         # NOTE (Sunghwan): scale is set to 0.003 for x and y, and 0.006 for z.
         basket_builder.add_visual_from_file(
             self.basket_model_path,
-            scale=[0.003, 0.006, 0.003],
+            scale=[0.002, 0.003, 0.003],
             material=basket_mat,
         )
         
-        basket_builder.add_convex_collision_from_file(
+        basket_builder.add_nonconvex_collision_from_file(
             filename=self.basket_model_path,
-            scale=[0.003, 0.006, 0.003],
-            density=100000
+            scale=[0.002, 0.003, 0.003]
         )
         
         # Position basket at center of table, on top of the table surface
         # The basket's bottom should sit on the table surface
         # (sunghwan) (NOTE) move basket toward x axis and rotate 1/4 pi
-        basket_z = table_surface_z + 0.001  # Small offset above table surface
+        basket_z = table_surface_z - 0.1135  # 37.8518 * 0.003
+        # basket_pose = sapien.Pose(
+        #     p=[table_center_x + 0.05, table_center_y, basket_z],
+        #     q=euler2quat(np.pi/2, 0, np.pi * 1 / 4)  # 90 degree rotation around X-axis to lay basket horizontally
+        # )
         basket_pose = sapien.Pose(
             p=[table_center_x + 0.05, table_center_y, basket_z],
-            q=euler2quat(np.pi/2, 0, np.pi * 1 / 4)  # 90 degree rotation around X-axis to lay basket horizontally
+            q=euler2quat(0, 0, 0)  # 90 degree rotation around X-axis to lay basket horizontally
         )
         basket_builder.initial_pose = basket_pose
         
