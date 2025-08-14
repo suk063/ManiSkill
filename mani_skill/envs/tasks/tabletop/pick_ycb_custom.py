@@ -37,6 +37,7 @@ class PickYCBCustomEnv(BaseEnv):
     model_ids = ["005_tomato_soup_can", "009_gelatin_box", "024_bowl", "013_apple", "011_banana"]
     obj_half_size = 0.025
     basket_half_size = 0.132 / 2 # 44.2964 (original_size) * 0.003 (scale) / 2.0
+    basket_pos_offset = torch.tensor([0, 0, 0.1135])
 
     def __init__(self, *args, grid_dim: int = 10, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
@@ -247,13 +248,13 @@ class PickYCBCustomEnv(BaseEnv):
             obs.update(
                 # obj_pose=self.pick_obj.pose.raw_pose,
                 tcp_to_obj_pos=self.pick_obj.pose.p - self.agent.tcp_pose.p,
-                obj_to_basket_pos=(self.basket.pose.p + torch.tensor([0, 0, 0.1135], device=self.device)) - self.pick_obj.pose.p,
+                obj_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj.pose.p,
             )
         return obs
 
     def evaluate(self):
         pos_obj = self.pick_obj.pose.p
-        pos_basket_bottom = self.basket.pose.p.clone() + torch.tensor([0, 0, 0.1135], device=self.device)
+        pos_basket_bottom = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         
         # XY-plane check
         xy_flag = torch.linalg.norm(pos_obj[..., :2] - pos_basket_bottom[..., :2], axis=1) <= 0.12  # 0.24 / 2.0
@@ -299,7 +300,7 @@ class PickYCBCustomEnv(BaseEnv):
 
         # grasp and reach basket top reward
         obj_pos = self.pick_obj.pose.p
-        basket_top_pos = self.basket.pose.p.clone() + torch.tensor([0, 0, 0.1135], device=self.device) # [-0.1745, 0, -0.1135]
+        basket_top_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device) # [-0.1745, 0, -0.1135]
 
         # import pdb; pdb.set_trace()
         
@@ -310,7 +311,7 @@ class PickYCBCustomEnv(BaseEnv):
         reward[info["is_obj_grasped"]] = (4 + reach_basket_top_reward)[info["is_obj_grasped"]]
 
         # NOTE: Need to tune this to get a z value inside the basket
-        basket_inside_pos = self.basket.pose.p.clone() + torch.tensor([0, 0, 0.1135], device=self.device) # [-0.1745, 0, -0.1135]   
+        basket_inside_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device) # [-0.1745, 0, -0.1135]   
         basket_inside_pos[:, 2] = basket_inside_pos[:, 2] + 0.03 # add 3cm to the basket bottom z
         obj_to_basket_inside_dist = torch.linalg.norm(basket_inside_pos - obj_pos, axis=1)
         reach_inside_basket_reward = 1 - torch.tanh(5.0 * obj_to_basket_inside_dist)
@@ -332,7 +333,7 @@ class PickYCBCustomEnv(BaseEnv):
         # go up and stay static reward
         robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), axis=1)
         robot_static_reward = 1 - torch.tanh(5.0 * robot_qvel)
-        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - (self.basket.pose.p + torch.tensor([0, 0, 0.1135], device=self.device)), axis=1)
+        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - (self.basket.pose.p + self.basket_pos_offset.to(self.device)), axis=1)
         reach_basket_top_reward = 1 - torch.tanh(5.0 * tcp_to_basket_top_dist)
         
         final_state = info["is_obj_placed_in_basket"] & ~info["is_obj_grasped"]

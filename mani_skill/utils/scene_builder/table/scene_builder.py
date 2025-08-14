@@ -139,7 +139,7 @@ class TableSceneBuilder(SceneBuilder):
             self.basket_model_path,
             scale=[0.002, 0.003, 0.003],
             material=basket_mat,
-        )
+        ) # now size is 0.24 * 0.24 * 0.132
         
         basket_builder.add_nonconvex_collision_from_file(
             filename=self.basket_model_path,
