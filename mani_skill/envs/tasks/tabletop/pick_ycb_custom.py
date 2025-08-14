@@ -54,7 +54,7 @@ class PickYCBCustomEnv(BaseEnv):
 
         self.spawn_z_clearance = 0.001 
 
-        super().__init__(*args, robot_uids=robot_uids, max_episode_steps=max_episode_steps, **kwargs)
+        super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
     @property
     def _default_sensor_configs(self):
