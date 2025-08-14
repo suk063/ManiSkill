@@ -253,16 +253,22 @@ class PickYCBCustomEnv(BaseEnv):
 
     def evaluate(self):
         pos_obj = self.pick_obj.pose.p
-        pos_basket = self.basket.pose.p.clone() + torch.tensor([0, 0, self.basket_half_size], device=self.device)
+        pos_basket_bottom = self.basket.pose.p.clone()
         
-        offset = pos_obj - pos_basket
-        xy_flag = torch.linalg.norm(offset[..., :2], axis=1) <= 0.1 # 105.2038 * 0.003 / 2.0 ~0.158  
+        # XY-plane check
+        xy_flag = torch.linalg.norm(pos_obj[..., :2] - pos_basket_bottom[..., :2], axis=1) <= 0.1  # 105.2038 * 0.003 / 2.0 ~ 0.158  
         
-        # NOTE: Need to check if these flags are correct
-        entering_basket_z_flag = (
-            offset[..., 2] - self.env_target_obj_half_height < self.basket_half_size
-        )
-        placed_in_basket_z_flag = (offset[..., 2] < self.basket_half_size)
+        # Z-axis checks based on clearer variable names
+        obj_bottom_z = pos_obj[..., 2] - self.env_target_obj_half_height
+        obj_top_z = pos_obj[..., 2] + self.env_target_obj_half_height
+        basket_bottom_z = pos_basket_bottom[..., 2]
+        basket_top_z = pos_basket_bottom[..., 2] + 2 * self.basket_half_size
+        
+        # entering_basket_z_flag: True if the object's bottom is below the basket's top edge.
+        entering_basket_z_flag = obj_bottom_z < basket_top_z
+        
+        # placed_in_basket_z_flag: True if the object is entirely inside the basket (vertically).
+        placed_in_basket_z_flag = (obj_bottom_z > basket_bottom_z) & (obj_top_z < basket_top_z)
         
         # NOTE: This is the original flag from Dwait's code
         # placed_in_basket_z_flag = (
