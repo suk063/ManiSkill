@@ -42,7 +42,7 @@ class PickYCBCustomEnv(BaseEnv):
     def __init__(self, *args, grid_dim: int = 10, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.grid_dim = grid_dim
-        self.init_obj_orientations = {}
+        # self.init_obj_orientations = {}
 
         self.ycb_half_heights_m = {
             "005_tomato_soup_can": 0.101 / 2.0,
@@ -184,9 +184,14 @@ class PickYCBCustomEnv(BaseEnv):
         for obj_idx, obj in enumerate(self.ycb_objects):
             obj_positions = positions[:, obj_idx, :]  # Shape: (b, 3) - positions for this object type across all environments
             # Reset to saved initial orientations to avoid constant reconfiguration to pick up fallen objects
-            if obj_idx not in self.init_obj_orientations:
+            if not hasattr(self, "init_obj_orientations"):
+                self.init_obj_orientations = torch.empty((len(self.ycb_objects), self.num_envs, 4), device=self.device)
+            # When b=num_envs (first reset), save all initial orientations
+            if len(env_idx) == self.num_envs:
                 self.init_obj_orientations[obj_idx] = obj.pose.q
-            obj.set_pose(Pose.create_from_pq(obj_positions, self.init_obj_orientations[obj_idx]))
+            
+            obj_orientations = self.init_obj_orientations[obj_idx, env_idx]
+            obj.set_pose(Pose.create_from_pq(obj_positions, obj_orientations))
 
     def _generate_circular_positions_vectorized(self, center_x, center_y, center_z, radius, starting_angle, ordering_idx):
         """Generate circular positions for YCB objects using tensor operations."""
