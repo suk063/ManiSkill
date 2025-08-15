@@ -262,7 +262,7 @@ class PickYCBCustomEnv(BaseEnv):
         pos_basket_bottom = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         
         # XY-plane check
-        xy_flag = torch.linalg.norm(pos_obj[..., :2] - pos_basket_bottom[..., :2], axis=1) <= 0.12  # 0.24 / 2.0
+        xy_flag = torch.linalg.norm(pos_obj[..., :2] - pos_basket_bottom[..., :2], axis=1) <= 0.14  # 0.24 / 2.0
         
         # Z-axis checks based on clearer variable names
         obj_bottom_z = pos_obj[..., 2] - self.env_target_obj_half_height
