@@ -441,7 +441,7 @@ if __name__ == "__main__":
 
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint)
-        agent.load_state_dict(checkpoint["model"])
+        agent.load_state_dict(checkpoint["model"], strict=False)
         if "decoder" in checkpoint and args.use_map:
             decoder.load_state_dict(checkpoint["decoder"])
         if "optimizer" in checkpoint and not args.evaluate:

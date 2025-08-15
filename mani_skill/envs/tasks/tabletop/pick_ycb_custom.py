@@ -59,27 +59,27 @@ class PickYCBCustomEnv(BaseEnv):
     
     @property
     def _default_sensor_configs(self):
-        # base_camera_config = CameraConfig(
-        #     uid="base_camera", 
-        #     pose=sapien_utils.look_at(eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos), 
-        #     width=128, 
-        #     height=128, 
-        #     fov=np.pi / 2, 
-        #     near=0.01, 
-        #     far=100,
-        # )
-
-        hand_camera_config = CameraConfig(
-            uid="hand_camera",
-            pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
-            width=224,
-            height=224,
-            fov=np.pi * 0.4,
-            near=0.01,
+        base_camera_config = CameraConfig(
+            uid="hand_camera", 
+            pose=sapien_utils.look_at(eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos), 
+            width=224, 
+            height=224, 
+            fov=np.pi / 2, 
+            near=0.01, 
             far=100,
-            mount=self.agent.robot.links_map["camera_link"],
         )
-        return [hand_camera_config]
+
+        # hand_camera_config = CameraConfig(
+        #     uid="hand_camera",
+        #     pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
+        #     width=224,
+        #     height=224,
+        #     fov=np.pi /2,
+        #     near=0.01,
+        #     far=100,
+        #     mount=self.agent.robot.links_map["camera_link"],
+        # )
+        return [base_camera_config]
 
     @property
     def _default_human_render_camera_configs(self):

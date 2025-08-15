@@ -131,6 +131,13 @@ class TransformerLayer(nn.Module):
         out = self.norm2(src2 + self.dropout_ff(ff))
         return out
 
+class ZeroPos(nn.Module):
+    def __init__(self, out_dim: int):
+        super().__init__()
+        self.out_dim = out_dim
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x.new_zeros(x.size(0), self.out_dim)
+
 class LocalFeatureFusion(nn.Module):
     def __init__(
         self,
@@ -140,6 +147,7 @@ class LocalFeatureFusion(nn.Module):
         radius: float = 0.24,
         k: int = 8,
         dropout: float = 0.1,
+        use_rel_pos: bool = True
     ):
         super().__init__()
         self.radius, self.k = radius, k
@@ -152,7 +160,7 @@ class LocalFeatureFusion(nn.Module):
         for _ in range(num_layers):
             # PointTransformerConv for local feature aggregation.
             # It will update q_feat based on nearby kv_feat.
-            pos_nn = MLP([3, dim, dim], plain_last=False, batch_norm=False)
+            pos_nn = (MLP([3, dim, dim], plain_last=False, batch_norm=False) if use_rel_pos else ZeroPos(dim))
             attn_nn = MLP([dim, dim], plain_last=False, batch_norm=False) # Maps q - k + pos_emb
 
             self.convs.append(

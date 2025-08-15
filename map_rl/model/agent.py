@@ -113,7 +113,7 @@ class FeatureExtractor(nn.Module):
         Hf = Wf = 6
         depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
 
-        fx = fy = 154.1548
+        fx = fy = 112
         cx = cy = 112
         q_xyz, _ = get_3d_coordinates(
             depth_s,
