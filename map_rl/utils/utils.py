@@ -59,19 +59,27 @@ class DictArray(object):
         return DictArray(new_buffer_shape, None, data_dict=new_dict)
 
 
-def build_checkpoint(agent, args, envs):
+def build_checkpoint(agent, args, envs, optimizer=None, iteration=None, global_step=None, kl_coef=None):
     """
     Pack everything you might need at inference time into one dict.
     """
     ckpt = {
-        "model": agent.state_dict(),          
+        "model": agent.state_dict(),
         "obs_rms": getattr(envs, "obs_rms", None),
-        "cfg": vars(args),                    
+        "cfg": vars(args),
         "meta": {
             "torch": torch.__version__,
             "mani_skill": mani_skill.__version__,
         },
     }
+    if optimizer is not None:
+        ckpt["optimizer"] = optimizer.state_dict()
+    if iteration is not None:
+        ckpt["iteration"] = iteration
+    if global_step is not None:
+        ckpt["global_step"] = global_step
+    if kl_coef is not None:
+        ckpt["kl_coef"] = kl_coef
     return ckpt
 
 class Logger:

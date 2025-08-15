@@ -322,8 +322,8 @@ if __name__ == "__main__":
     #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
+    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
+    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
@@ -440,11 +440,23 @@ if __name__ == "__main__":
     kl_coef = args.kl_coef
 
     if args.checkpoint:
-        agent.load_state_dict(torch.load(args.checkpoint))
+        checkpoint = torch.load(args.checkpoint)
+        agent.load_state_dict(checkpoint["model"])
+        if "optimizer" in checkpoint and not args.evaluate:
+            optimizer.load_state_dict(checkpoint["optimizer"])
+            global_step = checkpoint["global_step"]
+            kl_coef = checkpoint["kl_coef"]
+            start_iteration = checkpoint["iteration"] + 1
+        else:
+            start_iteration = 1
+            global_step = 0
+    else:
+        start_iteration = 1
+        global_step = 0
 
     cumulative_times = defaultdict(float)
 
-    for iteration in range(1, args.num_iterations + 1):
+    for iteration in range(start_iteration, args.num_iterations + 1):
         # --------------------------------------------------------------
         # Resample subset of environments for this epoch (train)
         # --------------------------------------------------------------
@@ -542,7 +554,7 @@ if __name__ == "__main__":
         if args.save_model and iteration % args.eval_freq == 1:
             model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
             # torch.save(agent.state_dict(), model_path)
-            torch.save(build_checkpoint(agent, args, envs), model_path)
+            torch.save(build_checkpoint(agent, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
             print(f"model saved to {model_path}")
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -765,7 +777,7 @@ if __name__ == "__main__":
     if args.save_model and not args.evaluate:
         model_path = f"runs/{run_name}/final_ckpt.pt"
         # torch.save(agent.state_dict(), model_path)
-        torch.save(build_checkpoint(agent, args, envs), model_path)
+        torch.save(build_checkpoint(agent, args, envs, optimizer, args.num_iterations, global_step, kl_coef), model_path)
         print(f"model saved to {model_path}")
 
     envs.close()
