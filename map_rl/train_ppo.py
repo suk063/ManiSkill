@@ -347,7 +347,8 @@ if __name__ == "__main__":
     if args.capture_video:
         eval_output_dir = f"runs/{run_name}/videos"
         if args.evaluate:
-            eval_output_dir = f"{os.path.dirname(args.checkpoint)}/test_videos"
+            if args.checkpoint:
+                eval_output_dir = f"{os.path.dirname(args.checkpoint)}/test_videos"
         print(f"Saving eval videos to {eval_output_dir}")
         if args.save_train_video_freq is not None:
             save_video_trigger = lambda x : (x // args.num_steps) % args.save_train_video_freq == 0
@@ -768,4 +769,5 @@ if __name__ == "__main__":
         print(f"model saved to {model_path}")
 
     envs.close()
+    eval_envs.close()
     if logger is not None: logger.close()
