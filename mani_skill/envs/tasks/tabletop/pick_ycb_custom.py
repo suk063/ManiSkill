@@ -64,7 +64,7 @@ class PickYCBCustomEnv(BaseEnv):
             pose=sapien_utils.look_at(eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos), 
             width=224, 
             height=224, 
-            fov=np.pi / 2, 
+            fov=np.pi * 0.4, 
             near=0.01, 
             far=100,
         )

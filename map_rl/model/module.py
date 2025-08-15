@@ -144,10 +144,10 @@ class LocalFeatureFusion(nn.Module):
         dim: int,
         num_layers: int = 1,
         ff_mult: int = 4,
-        radius: float = 0.24,
-        k: int = 8,
+        radius: float = 0.12,
+        k: int = 1,
         dropout: float = 0.1,
-        use_rel_pos: bool = True
+        use_rel_pos: bool = False
     ):
         super().__init__()
         self.radius, self.k = radius, k
