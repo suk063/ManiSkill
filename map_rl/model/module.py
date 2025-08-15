@@ -25,13 +25,13 @@ class PointNet(nn.Module):
         self.net = nn.Sequential(
             layer_init(nn.Linear(input_dim, 256)),
             nn.LayerNorm(256),
-            nn.ReLU(),
+            nn.GELU(),
             layer_init(nn.Linear(256, 256)),
             nn.LayerNorm(256),
-            nn.ReLU(),
+            nn.GELU(),
             layer_init(nn.Linear(256, output_dim)),
-            nn.LayerNorm(output_dim),
-            nn.ReLU(),
+            # nn.LayerNorm(output_dim),
+            # nn.GELU(),
         )
 
     def forward(self, x):

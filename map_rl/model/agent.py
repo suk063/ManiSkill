@@ -225,28 +225,16 @@ class Agent(nn.Module):
         
         # Critic
         self.critic = nn.Sequential(
+            nn.LayerNorm(latent_size),
             layer_init(nn.Linear(latent_size, 512)),
-            nn.LayerNorm(512),
-            nn.GELU(),
-            layer_init(nn.Linear(512, 512)),
-            nn.LayerNorm(512),
-            nn.GELU(),
-            layer_init(nn.Linear(512, 512)),
-            nn.LayerNorm(512),
             nn.GELU(),
             layer_init(nn.Linear(512, 1)),
         )
 
         # Actor: mean of Gaussian policy
         self.actor_mean = nn.Sequential(
+            nn.LayerNorm(latent_size),
             layer_init(nn.Linear(latent_size, 512)),
-            nn.LayerNorm(512),
-            nn.GELU(),
-            layer_init(nn.Linear(512, 512)),
-            nn.LayerNorm(512),
-            nn.GELU(),
-            layer_init(nn.Linear(512, 512)),
-            nn.LayerNorm(512),
             nn.GELU(),
             layer_init(
                 nn.Linear(512, int(np.prod(envs.unwrapped.single_action_space.shape))),
