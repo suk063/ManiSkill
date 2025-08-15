@@ -60,11 +60,11 @@ class PickYCBCustomEnv(BaseEnv):
     @property
     def _default_sensor_configs(self):
         base_camera_config = CameraConfig(
-            uid="hand_camera", 
+            uid="base_camera", 
             pose=sapien_utils.look_at(eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos), 
             width=224, 
             height=224, 
-            fov=np.pi * 0.4, 
+            fov=np.pi / 3, 
             near=0.01, 
             far=100,
         )

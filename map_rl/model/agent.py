@@ -108,13 +108,13 @@ class FeatureExtractor(nn.Module):
 
         depth = observations["depth"].permute(0, 3, 1, 2).float() / 1000.0
         # pose = observations["sensor_param"]["base_camera"]["extrinsic_cv"]
-        pose = observations["sensor_param"]["hand_camera"]["extrinsic_cv"]
+        pose = observations["sensor_param"]["base_camera"]["extrinsic_cv"]
 
         Hf = Wf = 6
         depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
-
-        fx = fy = 154.1548
-        cx = cy = 112
+        
+        fx = fy = observations["sensor_param"]["base_camera"]["intrinsic_cv"][0][0][0]
+        cx = cy = observations["sensor_param"]["base_camera"]["intrinsic_cv"][0][0][2]
         q_xyz, _ = get_3d_coordinates(
             depth_s,
             pose,

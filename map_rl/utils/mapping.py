@@ -38,7 +38,7 @@ def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimiz
         segmentation = obs["segmentation"][i]
         
         # Camera intrinsics and extrinsics from sensor_param
-        cam_params = sensor_param['hand_camera']
+        cam_params = sensor_param['base_camera']
         extrinsic_cv = cam_params['extrinsic_cv'][i]
         intrinsic_cv = cam_params['intrinsic_cv'][i]
         
