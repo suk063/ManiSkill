@@ -59,7 +59,7 @@ class DictArray(object):
         return DictArray(new_buffer_shape, None, data_dict=new_dict)
 
 
-def build_checkpoint(agent, args, envs, optimizer=None, iteration=None, global_step=None, kl_coef=None):
+def build_checkpoint(agent, decoder, args, envs, optimizer=None, iteration=None, global_step=None, kl_coef=None):
     """
     Pack everything you might need at inference time into one dict.
     """
@@ -72,6 +72,8 @@ def build_checkpoint(agent, args, envs, optimizer=None, iteration=None, global_s
             "mani_skill": mani_skill.__version__,
         },
     }
+    if decoder is not None:
+        ckpt["decoder"] = decoder.state_dict()
     if optimizer is not None:
         ckpt["optimizer"] = optimizer.state_dict()
     if iteration is not None:

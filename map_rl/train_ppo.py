@@ -442,6 +442,8 @@ if __name__ == "__main__":
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint)
         agent.load_state_dict(checkpoint["model"])
+        if "decoder" in checkpoint and args.use_map:
+            decoder.load_state_dict(checkpoint["decoder"])
         if "optimizer" in checkpoint and not args.evaluate:
             optimizer.load_state_dict(checkpoint["optimizer"])
             global_step = checkpoint["global_step"]
@@ -552,9 +554,9 @@ if __name__ == "__main__":
             if args.evaluate:
                 break
         if args.save_model and iteration % args.eval_freq == 1:
-            model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
+            model_path = f"runs/{run_name}/ckpt_latest.pt"
             # torch.save(agent.state_dict(), model_path)
-            torch.save(build_checkpoint(agent, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
+            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
             print(f"model saved to {model_path}")
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -775,9 +777,9 @@ if __name__ == "__main__":
             logger.add_scalar(f"time/total_{k}", v, global_step)
         logger.add_scalar("time/total_rollout+update_time", cumulative_times["rollout_time"] + cumulative_times["update_time"], global_step)
     if args.save_model and not args.evaluate:
-        model_path = f"runs/{run_name}/final_ckpt.pt"
+        model_path = f"runs/{run_name}/ckpt_latest.pt"
         # torch.save(agent.state_dict(), model_path)
-        torch.save(build_checkpoint(agent, args, envs, optimizer, args.num_iterations, global_step, kl_coef), model_path)
+        torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, args.num_iterations, global_step, kl_coef), model_path)
         print(f"model saved to {model_path}")
 
     envs.close()

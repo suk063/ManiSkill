@@ -11,7 +11,7 @@ COMMON_ARGS=(
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
   # --num_envs=50
-  --num_envs=100
+  --num_envs=20
   --num_eval_envs=20
   --eval_freq=20
   --total_timesteps=100_000_000
@@ -34,8 +34,8 @@ run_cfg() {
 }
 
 # 1) plain-cnn / no map
-run_cfg plain-cnn-no-map \
-  --vision_encoder=plain_cnn
+# run_cfg plain-cnn-no-map \
+#   --vision_encoder=plain_cnn
 
 # 2) plain-cnn / map / no local fusion
 # run_cfg plain-cnn-map-no-local-fusion \
@@ -71,8 +71,9 @@ run_cfg plain-cnn-no-map \
 #   --use_online_mapping
 
 # 8) dino / map / local fusion / online mapping
-# run_cfg dino-map-local-fusion-online \
-#   --use_map \
-#   --use_local_fusion \
-#   --vision_encoder=dino \
-#   --use_online_mapping
+run_cfg dino-map-local-fusion-online \
+  --use_map \
+  --use_local_fusion \
+  --vision_encoder=dino \
+  --use_online_mapping \
+  # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-online/ckpt_latest.pt
