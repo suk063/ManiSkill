@@ -74,7 +74,7 @@ class PickYCBCustomEnv(BaseEnv):
         #     pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
         #     width=224,
         #     height=224,
-        #     fov=np.pi /2,
+        #     fov=np.pi / 3,
         #     near=0.01,
         #     far=100,
         #     mount=self.agent.robot.links_map["camera_link"],

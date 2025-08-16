@@ -50,10 +50,8 @@ class FeatureExtractor(nn.Module):
             nn.Flatten(),
             nn.Linear(n_flatten, 2048),
             nn.LayerNorm(2048),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(2048, feature_size),
-            nn.LayerNorm(feature_size),
-            nn.ReLU(),
         )
         
         # --------------------------------------------------------------- Map 3-D
@@ -127,8 +125,6 @@ class FeatureExtractor(nn.Module):
 
         q_xyz = q_xyz.permute(0, 2, 3, 1).reshape(B, -1, 3)            # (B, N, 3)
         q_feat = image_fmap.permute(0, 2, 3, 1).reshape(B, -1, self.vision_encoder.embed_dim)     # (B, N, C)
-
-    
 
         fused = self.local_fusion(q_xyz, q_feat, kv_xyz, kv_feat, pad_mask)  # (B, N, C)
         image_fmap = fused.permute(0, 2, 1).reshape(

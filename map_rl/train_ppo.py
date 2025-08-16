@@ -445,7 +445,9 @@ if __name__ == "__main__":
         if "decoder" in checkpoint and args.use_map:
             decoder.load_state_dict(checkpoint["decoder"])
         if "optimizer" in checkpoint and not args.evaluate:
-            optimizer.load_state_dict(checkpoint["optimizer"])
+            opt_state = checkpoint["optimizer"]
+            opt_state["param_groups"] = optimizer.param_groups
+            optimizer.load_state_dict(opt_state)
             global_step = checkpoint["global_step"]
             kl_coef = checkpoint["kl_coef"]
             start_iteration = checkpoint["iteration"] + 1
