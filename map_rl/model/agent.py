@@ -167,11 +167,7 @@ class FeatureExtractor(nn.Module):
             projected_tokens = image_tokens.reshape(B, self.num_cameras * H * W, -1)
             features["visual"] = projected_tokens
             
-            encoded = []
-            if "state" in features: encoded.append(features["state"].squeeze(1))
-            if "text" in features: encoded.append(features["text"].squeeze(1))
-            encoded.append(features["visual"].reshape(B, -1))
-            return torch.cat(encoded, dim=1)
+            return features
 
         assert map_features is not None, "map_features must be provided when use_map=True"
         
