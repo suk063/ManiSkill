@@ -58,8 +58,8 @@ class PickYCBCustomEnv(BaseEnv):
 
         self.spawn_z_clearance = 0.001 
         self.robot_cumulative_force_limit = 5000
-        self.robot_force_mult = 1.0
-        self.robot_force_penalty_min = 0.0
+        self.robot_force_mult = 0.001
+        self.robot_force_penalty_min = 0.2
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
     @property
@@ -102,6 +102,17 @@ class PickYCBCustomEnv(BaseEnv):
 
     def _load_agent(self, options: dict, initial_agent_poses = sapien.Pose(p=[-0.615, 0, 0]), build_separate: bool = False):
         super()._load_agent(options, initial_agent_poses, build_separate)
+
+        # Ignore gripper finger pads for collision checking
+        force_rew_ignore_links = [
+            "left_inner_finger_pad",
+            "right_inner_finger_pad",
+        ]
+        self.force_articulation_link_names = [
+            link.name
+            for link in self.agent.robot.get_links()
+            if link.name not in force_rew_ignore_links
+        ]
 
     def _load_scene(self, options: dict):
         self.table_scene = TableSceneBuilder(
@@ -303,8 +314,9 @@ class PickYCBCustomEnv(BaseEnv):
         success = is_obj_placed_in_basket & is_obj_static & (~is_obj_grasped) & is_robot_static
         
         # calculate and update robot force
-        robot_force = self.agent.robot.get_qf()
-        self.robot_cumulative_force += torch.norm(robot_force, dim=1)
+        robot_force_on_links = self.agent.robot.get_net_contact_forces(self.force_articulation_link_names)
+        robot_force = torch.sum(torch.norm(robot_force_on_links, dim=-1), dim=-1)
+        self.robot_cumulative_force += robot_force
 
         return {
             "env_target_obj_idx": self.env_target_obj_idx,
@@ -314,7 +326,7 @@ class PickYCBCustomEnv(BaseEnv):
             "is_obj_static": is_obj_static,
             "is_robot_static": is_robot_static,
             "success": success,
-            "robot_force": torch.norm(robot_force, dim=1),
+            "robot_force": robot_force,
             "robot_cumulative_force": self.robot_cumulative_force,
         }
 
