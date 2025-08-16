@@ -331,7 +331,7 @@ if __name__ == "__main__":
     #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim, camera_uids=args.camera_uids)
+    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="state", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim, camera_uids=args.camera_uids)
     # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode

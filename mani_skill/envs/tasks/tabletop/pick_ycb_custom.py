@@ -57,7 +57,9 @@ class PickYCBCustomEnv(BaseEnv):
         }
 
         self.spawn_z_clearance = 0.001 
-
+        self.robot_cumulative_force_limit = 5000
+        self.robot_force_mult = 1.0
+        self.robot_force_penalty_min = 0.0
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
     @property
@@ -248,8 +250,11 @@ class PickYCBCustomEnv(BaseEnv):
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
+            if not hasattr(self, "robot_cumulative_force"):
+                self.robot_cumulative_force = torch.zeros(self.num_envs, device=self.device)
             self.table_scene.initialize(env_idx)
             self._initialize_ycb_objects(env_idx)
+            self.robot_cumulative_force[env_idx] = 0.0
     
     def _get_obs_extra(self, info: Dict):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
@@ -296,6 +301,11 @@ class PickYCBCustomEnv(BaseEnv):
         is_obj_static = self.pick_obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
         is_robot_static = self.agent.is_static(0.2)
         success = is_obj_placed_in_basket & is_obj_static & (~is_obj_grasped) & is_robot_static
+        
+        # calculate and update robot force
+        robot_force = self.agent.robot.get_qf()
+        self.robot_cumulative_force += torch.norm(robot_force, dim=1)
+
         return {
             "env_target_obj_idx": self.env_target_obj_idx,
             "is_obj_grasped": is_obj_grasped,
@@ -304,6 +314,8 @@ class PickYCBCustomEnv(BaseEnv):
             "is_obj_static": is_obj_static,
             "is_robot_static": is_robot_static,
             "success": success,
+            "robot_force": torch.norm(robot_force, dim=1),
+            "robot_cumulative_force": self.robot_cumulative_force,
         }
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
@@ -357,6 +369,37 @@ class PickYCBCustomEnv(BaseEnv):
 
         # success reward
         reward[info["success"]] = 15
+
+        # penalty for ee moving too much when not grasping
+        ee_vel = self.agent.tcp.linear_velocity
+        ee_still_rew = 1 - torch.tanh(torch.norm(ee_vel, dim=1) / 5)
+        reward += ee_still_rew
+
+        # colliisions penalty
+        step_no_col_rew = 3 * (
+            1
+            - torch.tanh(
+                3
+                * (
+                    torch.clamp(
+                        self.robot_force_mult * info["robot_force"],
+                        min=self.robot_force_penalty_min,
+                    )
+                    - self.robot_force_penalty_min
+                )
+            )
+        )
+        reward += step_no_col_rew
+
+        # cumulative collision penalty
+        cum_col_under_thresh_rew = (
+            2
+            * (
+                info["robot_cumulative_force"]
+                < self.robot_cumulative_force_limit
+            ).float()
+        )
+        reward += cum_col_under_thresh_rew
         return reward
 
 
@@ -364,4 +407,4 @@ class PickYCBCustomEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 2] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 10.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 21.0
