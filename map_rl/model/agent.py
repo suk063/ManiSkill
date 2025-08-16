@@ -31,9 +31,11 @@ class FeatureExtractor(nn.Module):
             use_map: bool = True,
             use_local_fusion: bool = False,
             text_embeddings: Optional[torch.Tensor] = None,
+            camera_uid: str = "base_camera",
         ) -> None:
         super().__init__()
         
+        self.camera_uid = camera_uid
         # --------------------------------------------------------------- Vision
         object.__setattr__(self, "_decoder", decoder)  # None → RGB-only mode
         
@@ -106,13 +108,13 @@ class FeatureExtractor(nn.Module):
 
         depth = observations["depth"].permute(0, 3, 1, 2).float() / 1000.0
         # pose = observations["sensor_param"]["base_camera"]["extrinsic_cv"]
-        pose = observations["sensor_param"]["base_camera"]["extrinsic_cv"]
+        pose = observations["sensor_param"][self.camera_uid]["extrinsic_cv"]
 
         Hf = Wf = 6
         depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
         
-        fx = fy = observations["sensor_param"]["base_camera"]["intrinsic_cv"][0][0][0]
-        cx = cy = observations["sensor_param"]["base_camera"]["intrinsic_cv"][0][0][2]
+        fx = fy = observations["sensor_param"][self.camera_uid]["intrinsic_cv"][0][0][0]
+        cx = cy = observations["sensor_param"][self.camera_uid]["intrinsic_cv"][0][0][2]
         q_xyz, _ = get_3d_coordinates(
             depth_s,
             pose,
@@ -202,6 +204,7 @@ class Agent(nn.Module):
         use_local_fusion: bool = False, 
         vision_encoder: str = "plain_cnn",
         text_embeddings: Optional[torch.Tensor] = None,
+        camera_uid: str = "base_camera",
     ):
         super().__init__()
         if text_embeddings is not None:
@@ -216,6 +219,7 @@ class Agent(nn.Module):
             use_local_fusion=use_local_fusion, 
             vision_encoder=vision_encoder,
             text_embeddings=self.text_embeddings,
+            camera_uid=camera_uid,
         )
         latent_size = self.feature_net.output_dim
         

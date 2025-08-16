@@ -97,6 +97,8 @@ class Args:
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
+    camera_uid: str = "base_camera"
+    """the camera to use for the environment"""
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.8
@@ -322,7 +324,7 @@ if __name__ == "__main__":
     #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
+    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim, camera_uid=args.camera_uid)
     # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
@@ -417,6 +419,7 @@ if __name__ == "__main__":
         use_local_fusion=args.use_local_fusion, 
         vision_encoder=args.vision_encoder,
         text_embeddings=text_embeddings,
+        camera_uid=args.camera_uid,
     ).to(device)
     # Use differential learning rates for DINO backbone vs. the rest
     if args.vision_encoder == "dino":

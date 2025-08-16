@@ -39,9 +39,10 @@ class PickYCBCustomEnv(BaseEnv):
     basket_half_size = 0.132 / 2 # 44.2964 (original_size) * 0.003 (scale) / 2.0
     basket_pos_offset = torch.tensor([0, 0, 0.1135])
 
-    def __init__(self, *args, grid_dim: int = 10, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, **kwargs):
+    def __init__(self, *args, grid_dim: int = 10, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, camera_uid="base_camera", **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.grid_dim = grid_dim
+        self.camera_uid = camera_uid
         # self.init_obj_orientations = {}
 
         self.ycb_half_heights_m = {
@@ -69,17 +70,22 @@ class PickYCBCustomEnv(BaseEnv):
             far=100,
         )
 
-        # hand_camera_config = CameraConfig(
-        #     uid="hand_camera",
-        #     pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
-        #     width=224,
-        #     height=224,
-        #     fov=np.pi / 3,
-        #     near=0.01,
-        #     far=100,
-        #     mount=self.agent.robot.links_map["camera_link"],
-        # )
-        return [base_camera_config]
+        hand_camera_config = CameraConfig(
+            uid="hand_camera",
+            pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
+            width=224,
+            height=224,
+            fov=np.pi / 3,
+            near=0.01,
+            far=100,
+            mount=self.agent.robot.links_map["camera_link"],
+        )
+        if self.camera_uid == "base_camera":
+            return [base_camera_config]
+        elif self.camera_uid == "hand_camera":
+            return [hand_camera_config]
+        else:
+            raise ValueError(f"Unsupported camera_uid: {self.camera_uid}")
 
     @property
     def _default_human_render_camera_configs(self):
