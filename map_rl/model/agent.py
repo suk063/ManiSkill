@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 import gymnasium as gym
-from typing import Optional, List
+from typing import Optional, List, Union
 import xformers.ops as xops
 from model.module import PointNet, LocalFeatureFusion, layer_init
 from utils.operator import get_3d_coordinates
@@ -31,11 +31,14 @@ class FeatureExtractor(nn.Module):
             use_map: bool = True,
             use_local_fusion: bool = False,
             text_embeddings: Optional[torch.Tensor] = None,
-            camera_uid: str = "base_camera",
+            camera_uids: Union[str, List[str]] = "base_camera",
         ) -> None:
         super().__init__()
         
-        self.camera_uid = camera_uid
+        if isinstance(camera_uids, str):
+            camera_uids = [camera_uids]
+        self.camera_uids = camera_uids
+        self.num_cameras = len(self.camera_uids)
         # --------------------------------------------------------------- Vision
         object.__setattr__(self, "_decoder", decoder)  # None → RGB-only mode
         
@@ -79,7 +82,7 @@ class FeatureExtractor(nn.Module):
             self.text_proj = nn.Linear(text_embeddings.shape[-1], feature_size)
 
         num_branches = 1  # state
-        num_branches += 1  # global RGB 
+        num_branches += self.num_cameras  # global RGB 
         if self.use_map:
             num_branches += 1  # global map
         if text_embeddings is not None:
@@ -92,6 +95,7 @@ class FeatureExtractor(nn.Module):
         image_fmap: torch.Tensor,
         coords_batch: List[torch.Tensor],
         dec_split: List[torch.Tensor],
+        camera_uid: str,
     ) -> torch.Tensor:
         B = image_fmap.size(0)
 
@@ -108,13 +112,13 @@ class FeatureExtractor(nn.Module):
 
         depth = observations["depth"].permute(0, 3, 1, 2).float() / 1000.0
         # pose = observations["sensor_param"]["base_camera"]["extrinsic_cv"]
-        pose = observations["sensor_param"][self.camera_uid]["extrinsic_cv"]
+        pose = observations["sensor_param"][camera_uid]["extrinsic_cv"]
 
         Hf = Wf = 6
         depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
         
-        fx = fy = observations["sensor_param"][self.camera_uid]["intrinsic_cv"][0][0][0]
-        cx = cy = observations["sensor_param"][self.camera_uid]["intrinsic_cv"][0][0][2]
+        fx = fy = observations["sensor_param"][camera_uid]["intrinsic_cv"][0][0][0]
+        cx = cy = observations["sensor_param"][camera_uid]["intrinsic_cv"][0][0][2]
         q_xyz, _ = get_3d_coordinates(
             depth_s,
             pose,
@@ -140,7 +144,7 @@ class FeatureExtractor(nn.Module):
         observations: dict,
         map_features: Optional[List] = None,
         env_target_obj_idx: Optional[torch.Tensor] = None,
-        train_map_features: bool = True,
+        train_map_features: bool =False,
     ) -> torch.Tensor:
     
         B = observations["rgb"].size(0)
@@ -154,16 +158,23 @@ class FeatureExtractor(nn.Module):
             target_text_embeddings = self.text_embeddings[env_target_obj_idx]
             encoded.append(self.text_proj(target_text_embeddings))
 
-        image = transform(observations["rgb"].float().permute(0, 3, 1, 2) / 255.0)
-        image_fmap = self.vision_encoder(image) # B, C, Hf, Wf
+        # 1. Process multiple camera inputs by batching them
+        rgb_all_cameras = observations["rgb"].float().permute(0, 3, 1, 2) / 255.0
+        rgb_per_camera = torch.chunk(rgb_all_cameras, self.num_cameras, dim=1)
+        image_batch = torch.cat(rgb_per_camera, dim=0)
+
+        image = transform(image_batch)
+        image_fmap = self.vision_encoder(image) # (B * num_cameras, C, Hf, Wf)
 
         if not self.use_map:
-            image_vec = self.global_proj(image_fmap) 
-            encoded.append(image_vec)
+            image_vec = self.global_proj(image_fmap)
+            image_vecs = torch.chunk(image_vec, self.num_cameras, dim=0)
+            encoded.extend(list(image_vecs))
             return torch.cat(encoded, dim=1)
 
         assert map_features is not None, "map_features must be provided when use_map=True"
         
+        # 2. Process map features once per environment (batch size B)
         coords_batch, raw_batch = [], []
         for g in map_features:
             coords = g.levels[1].coords
@@ -184,17 +195,33 @@ class FeatureExtractor(nn.Module):
             with torch.no_grad():
                 map_vec = self.map_encoder(pad_3d)
         encoded.append(map_vec)
-
-        if self.use_local_fusion and train_map_features:
-            image_fmap = self._local_fusion(
-                observations=observations,
-                image_fmap=image_fmap,
-                coords_batch=coords_batch,
-                dec_split=dec_split,
-            )
         
-        image_vec = self.global_proj(image_fmap)                                # B, 256
-        encoded.append(image_vec)
+        if self.use_local_fusion and train_map_features:
+            # Fuse each camera's image_fmap with the same map features
+            fused_image_fmaps = []
+            image_fmaps_per_cam = torch.chunk(image_fmap, self.num_cameras, dim=0)
+            depth_all_cameras = observations["depth"]
+            depth_per_camera = torch.chunk(depth_all_cameras, self.num_cameras, dim=-1)
+
+            for i, cam_uid in enumerate(self.camera_uids):
+                # Create a temporary observation dict for _local_fusion
+                obs_cam = {
+                    "depth": depth_per_camera[i],
+                    "sensor_param": {cam_uid: observations["sensor_param"][cam_uid]}
+                }
+                fused = self._local_fusion(
+                    observations=obs_cam,
+                    image_fmap=image_fmaps_per_cam[i],
+                    coords_batch=coords_batch,
+                    dec_split=dec_split,
+                    camera_uid=cam_uid,
+                )
+                fused_image_fmaps.append(fused)
+            image_fmap = torch.cat(fused_image_fmaps, dim=0)
+        
+        image_vec = self.global_proj(image_fmap)                                # B * num_cameras, 256
+        image_vecs = torch.chunk(image_vec, self.num_cameras, dim=0)
+        encoded.extend(list(image_vecs))
 
         return torch.cat(encoded, dim=1)
 
@@ -209,7 +236,7 @@ class Agent(nn.Module):
         use_local_fusion: bool = False, 
         vision_encoder: str = "plain_cnn",
         text_embeddings: Optional[torch.Tensor] = None,
-        camera_uid: str = "base_camera",
+        camera_uids: Union[str, List[str]] = "base_camera",
     ):
         super().__init__()
         if text_embeddings is not None:
@@ -224,7 +251,7 @@ class Agent(nn.Module):
             use_local_fusion=use_local_fusion, 
             vision_encoder=vision_encoder,
             text_embeddings=self.text_embeddings,
-            camera_uid=camera_uid,
+            camera_uids=camera_uids,
         )
         latent_size = self.feature_net.output_dim
         

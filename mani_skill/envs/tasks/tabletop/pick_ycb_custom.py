@@ -39,10 +39,12 @@ class PickYCBCustomEnv(BaseEnv):
     basket_half_size = 0.132 / 2 # 44.2964 (original_size) * 0.003 (scale) / 2.0
     basket_pos_offset = torch.tensor([0, 0, 0.1135])
 
-    def __init__(self, *args, grid_dim: int = 10, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, camera_uid="base_camera", **kwargs):
+    def __init__(self, *args, grid_dim: int = 10, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, camera_uids: Union[str, List[str]]="base_camera", **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.grid_dim = grid_dim
-        self.camera_uid = camera_uid
+        if isinstance(camera_uids, str):
+            camera_uids = [camera_uids]
+        self.camera_uids = camera_uids
         # self.init_obj_orientations = {}
 
         self.ycb_half_heights_m = {
@@ -80,12 +82,14 @@ class PickYCBCustomEnv(BaseEnv):
             far=100,
             mount=self.agent.robot.links_map["camera_link"],
         )
-        if self.camera_uid == "base_camera":
-            return [base_camera_config]
-        elif self.camera_uid == "hand_camera":
-            return [hand_camera_config]
-        else:
-            raise ValueError(f"Unsupported camera_uid: {self.camera_uid}")
+        
+        sensor_configs = []
+        if "base_camera" in self.camera_uids:
+            sensor_configs.append(base_camera_config)
+        if "hand_camera" in self.camera_uids:
+            sensor_configs.append(hand_camera_config)
+        
+        return sensor_configs
 
     @property
     def _default_human_render_camera_configs(self):

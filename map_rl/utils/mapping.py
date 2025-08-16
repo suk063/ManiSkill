@@ -32,58 +32,76 @@ def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimiz
 
     # Iterate over environments that need updates
     for i in torch.where(update_mask)[0].tolist():
-        # Prepare inputs for a single environment
-        rgb = obs["rgb"][i].permute(2, 0, 1)
-        depth = obs["depth"][i]
-        segmentation = obs["segmentation"][i]
         
-        # Camera intrinsics and extrinsics from sensor_param
-        cam_params = sensor_param[args.camera_uid]
-        extrinsic_cv = cam_params['extrinsic_cv'][i]
-        intrinsic_cv = cam_params['intrinsic_cv'][i]
-        
-        fx, fy = intrinsic_cv[0, 0], intrinsic_cv[1, 1]
-        cx, cy = intrinsic_cv[0, 2], intrinsic_cv[1, 2]
-        extrinsic_t = extrinsic_cv.unsqueeze(0).unsqueeze(0)
+        env_coords_valid = []
+        env_feats_valid = []
 
-        # Preprocess image and extract features
-        img_tensor = transform(rgb / 255.0).unsqueeze(0).to(args.device)
-        with torch.no_grad():
-            vis_feat = get_visual_features(clip_model, img_tensor)
-        
-        B, C_, Hf, Wf = vis_feat.shape
+        # Process each camera view for the current environment
+        for cam_idx, cam_uid in enumerate(args.camera_uids):
+            # Prepare inputs for a single environment and camera
+            # Assuming RGB/Depth/Seg observations are concatenated along the channel axis
+            num_cams = len(args.camera_uids)
+            
+            # Extract data for the current camera
+            rgb_channels = obs["rgb"][i].shape[-1]
+            rgb = obs["rgb"][i][:, :, (rgb_channels//num_cams)*cam_idx:(rgb_channels//num_cams)*(cam_idx+1)].permute(2, 0, 1)
+            
+            depth_channels = obs["depth"][i].shape[-1]
+            depth = obs["depth"][i][:, :, (depth_channels//num_cams)*cam_idx:(depth_channels//num_cams)*(cam_idx+1)]
 
-        # Get 3D coordinates from depth
-        depth_t = depth.permute(2, 0, 1).unsqueeze(0)
-        depth_t = F.interpolate(depth_t / 1000.0, (Hf, Wf), mode="nearest-exact")
-        coords_world, _ = get_3d_coordinates(depth_t, extrinsic_t, fx=fx, fy=fy, cx=cx, cy=cy)
+            seg_channels = obs["segmentation"][i].shape[-1]
+            segmentation = obs["segmentation"][i][:, :, (seg_channels//num_cams)*cam_idx:(seg_channels//num_cams)*(cam_idx+1)]
 
-        feats_flat = vis_feat.permute(0, 2, 3, 1).reshape(-1, C_)
-        coords_flat = coords_world.permute(0, 2, 3, 1).reshape(-1, 3)
+            # Camera intrinsics and extrinsics from sensor_param
+            cam_params = sensor_param[cam_uid]
+            extrinsic_cv = cam_params['extrinsic_cv'][i]
+            intrinsic_cv = cam_params['intrinsic_cv'][i]
+            
+            fx, fy = intrinsic_cv[0, 0], intrinsic_cv[1, 1]
+            cx, cy = intrinsic_cv[0, 2], intrinsic_cv[1, 2]
+            extrinsic_t = extrinsic_cv.unsqueeze(0).unsqueeze(0)
 
-        # Filter out robot pixels
-        segmentation_t = segmentation.permute(2, 0, 1).unsqueeze(0).float()
-        segmentation_t = F.interpolate(segmentation_t, (Hf, Wf), mode="nearest-exact").long().squeeze()
-        is_robot = torch.isin(segmentation_t, robot_ids_tensor)
-        non_robot_mask = ~is_robot.reshape(-1)
-        
-        if non_robot_mask.sum() == 0:
-            continue
+            # Preprocess image and extract features
+            img_tensor = transform(rgb / 255.0).unsqueeze(0).to(args.device)
+            with torch.no_grad():
+                vis_feat = get_visual_features(clip_model, img_tensor)
+            
+            B, C_, Hf, Wf = vis_feat.shape
 
-        coords_non_robot = coords_flat[non_robot_mask]
-        feats_non_robot = feats_flat[non_robot_mask]
+            # Get 3D coordinates from depth
+            depth_t = depth.permute(2, 0, 1).unsqueeze(0)
+            depth_t = F.interpolate(depth_t / 1000.0, (Hf, Wf), mode="nearest-exact")
+            coords_world, _ = get_3d_coordinates(depth_t, extrinsic_t, fx=fx, fy=fy, cx=cx, cy=cy)
 
-        # Filter out-of-bounds coordinates
+            feats_flat = vis_feat.permute(0, 2, 3, 1).reshape(-1, C_)
+            coords_flat = coords_world.permute(0, 2, 3, 1).reshape(-1, 3)
 
-        scene_min, scene_max = grids[i].get_scene_bounds()
-        in_x = (coords_non_robot[:, 0] >= scene_min[0]) & (coords_non_robot[:, 0] <= scene_max[0])
-        in_y = (coords_non_robot[:, 1] >= scene_min[1]) & (coords_non_robot[:, 1] <= scene_max[1])
-        in_z = (coords_non_robot[:, 2] >= scene_min[2]) & (coords_non_robot[:, 2] <= scene_max[2])
-        in_bounds = in_x & in_y & in_z
+            # Filter out robot pixels
+            segmentation_t = segmentation.permute(2, 0, 1).unsqueeze(0).float()
+            segmentation_t = F.interpolate(segmentation_t, (Hf, Wf), mode="nearest-exact").long().squeeze()
+            is_robot = torch.isin(segmentation_t, robot_ids_tensor)
+            non_robot_mask = ~is_robot.reshape(-1)
+            
+            if non_robot_mask.sum() == 0:
+                continue
 
-        if in_bounds.sum() > 0:
-            all_coords_valid.append(coords_non_robot[in_bounds])
-            all_feats_valid.append(feats_non_robot[in_bounds])
+            coords_non_robot = coords_flat[non_robot_mask]
+            feats_non_robot = feats_flat[non_robot_mask]
+
+            # Filter out-of-bounds coordinates
+            scene_min, scene_max = grids[i].get_scene_bounds()
+            in_x = (coords_non_robot[:, 0] >= scene_min[0]) & (coords_non_robot[:, 0] <= scene_max[0])
+            in_y = (coords_non_robot[:, 1] >= scene_min[1]) & (coords_non_robot[:, 1] <= scene_max[1])
+            in_z = (coords_non_robot[:, 2] >= scene_min[2]) & (coords_non_robot[:, 2] <= scene_max[2])
+            in_bounds = in_x & in_y & in_z
+
+            if in_bounds.sum() > 0:
+                env_coords_valid.append(coords_non_robot[in_bounds])
+                env_feats_valid.append(feats_non_robot[in_bounds])
+
+        if env_coords_valid:
+            all_coords_valid.append(torch.cat(env_coords_valid, dim=0))
+            all_feats_valid.append(torch.cat(env_feats_valid, dim=0))
             valid_env_indices.append(i)
 
     if not valid_env_indices:
