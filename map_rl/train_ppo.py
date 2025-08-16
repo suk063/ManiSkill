@@ -184,6 +184,8 @@ class Args:
     """the frequency of online map updates"""
     map_start_iteration: int = 10000000
     """iteration to start using map features"""
+    state_only: bool = True
+    """if toggled, use only state and text embeddings for the agent"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -425,9 +427,10 @@ if __name__ == "__main__":
         vision_encoder=args.vision_encoder,
         text_embeddings=text_embeddings,
         camera_uids=args.camera_uids,
+        state_only=args.state_only,
     ).to(device)
     # Use differential learning rates for DINO backbone vs. the rest
-    if args.vision_encoder == "dino":
+    if args.vision_encoder == "dino" and not args.state_only:
         try:
             dino_backbone_params = list(agent.feature_net.vision_encoder.backbone.parameters())
             dino_backbone_param_ids = set(map(id, dino_backbone_params))

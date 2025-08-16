@@ -32,36 +32,15 @@ class FeatureExtractor(nn.Module):
             use_local_fusion: bool = False,
             text_embeddings: Optional[torch.Tensor] = None,
             camera_uids: Union[str, List[str]] = "base_camera",
+            state_only: bool = False,
         ) -> None:
         super().__init__()
+        self.state_only = state_only
         
         if isinstance(camera_uids, str):
             camera_uids = [camera_uids]
         self.camera_uids = camera_uids
         self.num_cameras = len(self.camera_uids)
-        # --------------------------------------------------------------- Vision
-        object.__setattr__(self, "_decoder", decoder)  # None → RGB-only mode
-        
-        if vision_encoder == 'dino':
-            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=feature_size)
-        elif vision_encoder == 'plain_cnn':
-            self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=feature_size)
-        else:
-            raise ValueError(f"Vision encoder {vision_encoder} not supported")
-        
-        # self.visual_feature_proj = nn.Linear(self.vision_encoder.embed_dim, feature_size)
-        
-        # --------------------------------------------------------------- Map 3-D
-        self.use_map = use_map and (decoder is not None)
-        self.use_local_fusion = self.use_map and use_local_fusion
-
-        if self.use_map:
-            map_raw_dim = 768  # output dim of *decoder*
-            self.map_encoder = PointNet(map_raw_dim, feature_size)
-
-            if self.use_local_fusion:
-                self.map_feature_proj = nn.Linear(map_raw_dim, self.vision_encoder.embed_dim)
-                self.local_fusion = LocalFeatureFusion(dim=self.vision_encoder.embed_dim, k=1, radius=0.12, num_layers=1)
 
         # --------------------------------------------------------------- State
         self.state_proj = None
@@ -73,12 +52,42 @@ class FeatureExtractor(nn.Module):
         if text_embeddings is not None:
             self.text_proj = nn.Linear(text_embeddings.shape[-1], feature_size)
 
-        num_branches = 1  # state
-        num_branches += self.num_cameras  # global RGB 
-        if self.use_map:
-            num_branches += 1  # global map
-        if text_embeddings is not None:
+        num_branches = 0
+        if self.state_proj is not None:
             num_branches += 1
+        if self.text_proj is not None:
+            num_branches += 1
+
+        if not self.state_only:
+            # --------------------------------------------------------------- Vision
+            object.__setattr__(self, "_decoder", decoder)  # None → RGB-only mode
+            
+            if vision_encoder == 'dino':
+                self.vision_encoder = DINO2DFeatureEncoder(embed_dim=feature_size)
+            elif vision_encoder == 'plain_cnn':
+                self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=feature_size)
+            else:
+                raise ValueError(f"Vision encoder {vision_encoder} not supported")
+            num_branches += self.num_cameras  # global RGB
+            
+            # self.visual_feature_proj = nn.Linear(self.vision_encoder.embed_dim, feature_size)
+            
+            # --------------------------------------------------------------- Map 3-D
+            self.use_map = use_map and (decoder is not None)
+            self.use_local_fusion = self.use_map and use_local_fusion
+
+            if self.use_map:
+                map_raw_dim = 768  # output dim of *decoder*
+                self.map_encoder = PointNet(map_raw_dim, feature_size)
+                num_branches += 1
+
+                if self.use_local_fusion:
+                    self.map_feature_proj = nn.Linear(map_raw_dim, self.vision_encoder.embed_dim)
+                    self.local_fusion = LocalFeatureFusion(dim=self.vision_encoder.embed_dim, k=1, radius=0.12, num_layers=1)
+        else:
+            self.use_map = False
+            self.use_local_fusion = False
+
         self.output_dim = num_branches * feature_size
 
     def _local_fusion(
@@ -139,7 +148,7 @@ class FeatureExtractor(nn.Module):
         train_map_features: bool =False,
     ) -> Union[torch.Tensor, dict]:
     
-        B = observations["rgb"].size(0)
+        B = observations["rgb"].size(0) if not self.state_only else observations["state"].size(0)
         features: dict[str, torch.Tensor] = {}
 
         if self.state_proj is not None:
@@ -149,6 +158,9 @@ class FeatureExtractor(nn.Module):
             assert env_target_obj_idx is not None, "env_target_obj_idx must be provided when using text embeddings"
             target_text_embeddings = self.text_embeddings[env_target_obj_idx]
             features["text"] = self.text_proj(target_text_embeddings).unsqueeze(1)
+
+        if self.state_only:
+            return features
 
         # 1. Process multiple camera inputs by batching them
         rgb_all_cameras = observations["rgb"].float().permute(0, 3, 1, 2) / 255.0
@@ -242,6 +254,7 @@ class Agent(nn.Module):
         vision_encoder: str = "plain_cnn",
         text_embeddings: Optional[torch.Tensor] = None,
         camera_uids: Union[str, List[str]] = "base_camera",
+        state_only: bool = False,
     ):
         super().__init__()
         if text_embeddings is not None:
@@ -257,23 +270,36 @@ class Agent(nn.Module):
             vision_encoder=vision_encoder,
             text_embeddings=self.text_embeddings,
             camera_uids=camera_uids,
+            state_only=state_only,
         )
         latent_size = self.feature_net.output_dim
         
-        self.actor_critic = ActionTransformerDecoder(
+        action_dim = int(np.prod(envs.unwrapped.single_action_space.shape))
+        self.actor = ActionTransformerDecoder(
             d_model=256,
             transf_input_dim=256,
             nhead=8,
             num_decoder_layers=4,
             dim_feedforward=1024,
             dropout=0.1,
-            action_dim=int(np.prod(envs.unwrapped.single_action_space.shape)),
+            output_dim=action_dim,
+            action_pred_horizon=1
+        )
+
+        self.critic = ActionTransformerDecoder(
+            d_model=256,
+            transf_input_dim=256,
+            nhead=8,
+            num_decoder_layers=4,
+            dim_feedforward=1024,
+            dropout=0.1,
+            output_dim=1,
             action_pred_horizon=1
         )
         
         # Log-std is state-independent
         self.actor_logstd = nn.Parameter(
-            torch.ones(1, int(np.prod(envs.unwrapped.single_action_space.shape))) * -0.5
+            torch.ones(1, action_dim) * -0.5
         )
         self.feature_net.text_embeddings = self.text_embeddings
 
@@ -284,13 +310,13 @@ class Agent(nn.Module):
 
     def get_value(self, x, map_features=None, env_target_obj_idx=None, train_map_features: bool = True):
         features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        _, value = self.actor_critic(features)
+        value = self.critic(features)
         return value
 
 
     def get_action(self, x, map_features=None, env_target_obj_idx=None, deterministic: bool = False, train_map_features: bool = True):
         features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        action_mean, _ = self.actor_critic(features)
+        action_mean = self.actor(features)
         if deterministic:
             return action_mean
         action_logstd = self.actor_logstd.expand_as(action_mean)
@@ -300,7 +326,8 @@ class Agent(nn.Module):
 
     def get_action_and_value(self, x, map_features=None, env_target_obj_idx=None, action=None, train_map_features: bool = True):
         features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        action_mean, value = self.actor_critic(features)
+        action_mean = self.actor(features)
+        value = self.critic(features)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)

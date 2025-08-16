@@ -304,7 +304,7 @@ class ActionTransformerDecoder(nn.Module):
         num_decoder_layers: int,
         dim_feedforward: int,
         dropout: float,
-        action_dim: int,
+        output_dim: int,
         action_pred_horizon: int = 1,
     ):
         super().__init__()
@@ -321,8 +321,7 @@ class ActionTransformerDecoder(nn.Module):
             for _ in range(num_decoder_layers)
         ])
         
-        self.action_head = nn.Linear(d_model, action_dim)
-        self.value_head = nn.Linear(d_model, 1)
+        self.action_head = nn.Linear(d_model, output_dim)
         self.action_pred_horizon = action_pred_horizon
 
         self.memory_proj = nn.Linear(transf_input_dim, d_model)
@@ -336,7 +335,7 @@ class ActionTransformerDecoder(nn.Module):
         text_emb = features.get("text")
         map_tok = features.get("map")
 
-        B, _, d_model = visual_token.shape
+        B, _, d_model = state_tok.shape
         # Build memory and padding mask
         memory_parts = []
         padding_masks = []
@@ -380,6 +379,5 @@ class ActionTransformerDecoder(nn.Module):
             )
         
         decoder_out = decoder_out[:, 0] # Take the first and only timestep
-        action_out = self.action_head(decoder_out)
-        value_out = self.value_head(decoder_out)
-        return action_out, value_out
+        out = self.action_head(decoder_out)
+        return out
