@@ -43,21 +43,13 @@ class FeatureExtractor(nn.Module):
         object.__setattr__(self, "_decoder", decoder)  # None → RGB-only mode
         
         if vision_encoder == 'dino':
-            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64)
-            n_flatten = 36 * self.vision_encoder.embed_dim # 36 = 6 * 6
+            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=feature_size)
         elif vision_encoder == 'plain_cnn':
-            self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=64)
-            n_flatten = 36 * self.vision_encoder.embed_dim # 36 = 6 * 6
+            self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=feature_size)
         else:
             raise ValueError(f"Vision encoder {vision_encoder} not supported")
         
-        self.global_proj = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(n_flatten, 2048),
-            nn.LayerNorm(2048),
-            nn.GELU(),
-            nn.Linear(2048, feature_size),
-        )
+        # self.visual_feature_proj = nn.Linear(self.vision_encoder.embed_dim, feature_size)
         
         # --------------------------------------------------------------- Map 3-D
         self.use_map = use_map and (decoder is not None)
@@ -167,9 +159,13 @@ class FeatureExtractor(nn.Module):
         image_fmap = self.vision_encoder(image) # (B * num_cameras, C, Hf, Wf)
 
         if not self.use_map:
-            image_vec = self.global_proj(image_fmap)
-            image_vecs = torch.chunk(image_vec, self.num_cameras, dim=0)
-            features["visual"] = torch.stack(list(image_vecs), dim=1)
+            B_cam, C, H, W = image_fmap.shape
+            image_tokens = image_fmap.flatten(2).permute(0, 2, 1) # (B*num_cam, H*W, C)
+            # projected_tokens = self.visual_feature_proj(image_tokens) # (B*num_cam, 36, 256)
+            
+            # Reshape to (B, num_cameras * 36, 256)
+            projected_tokens = image_tokens.reshape(B, self.num_cameras * H * W, -1)
+            features["visual"] = projected_tokens
             
             encoded = []
             if "state" in features: encoded.append(features["state"].squeeze(1))
@@ -228,9 +224,13 @@ class FeatureExtractor(nn.Module):
                 fused_image_fmaps.append(fused)
             image_fmap = torch.cat(fused_image_fmaps, dim=0)
         
-        image_vec = self.global_proj(image_fmap)                                # B * num_cameras, 256
-        image_vecs = torch.chunk(image_vec, self.num_cameras, dim=0)
-        features["visual"] = torch.stack(list(image_vecs), dim=1)
+        B_cam, C, H, W = image_fmap.shape
+        image_tokens = image_fmap.flatten(2).permute(0, 2, 1) # (B*num_cam, H*W, C)
+        # projected_tokens = self.visual_feature_proj(image_tokens) # (B*num_cam, 36, 256)
+        
+        # Reshape to (B, num_cameras * 36, 256)
+        projected_tokens = image_tokens.reshape(B, self.num_cameras * H * W, -1)
+        features["visual"] = projected_tokens
 
         return features
 
@@ -288,18 +288,12 @@ class Agent(nn.Module):
 
     def get_value(self, x, map_features=None, env_target_obj_idx=None, train_map_features: bool = True):
         features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        if isinstance(features, dict):
-            _, value = self.actor_critic(features)
-            return value
-        else: # Fallback for non-map mode which returns concatenated features
-            raise RuntimeError("get_value is not supported in non-map mode with the new architecture.")
+        _, value = self.actor_critic(features)
+        return value
 
 
     def get_action(self, x, map_features=None, env_target_obj_idx=None, deterministic: bool = False, train_map_features: bool = True):
         features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        if not isinstance(features, dict):
-             raise RuntimeError("get_action is not supported in non-map mode with the new architecture.")
-        
         action_mean, _ = self.actor_critic(features)
         if deterministic:
             return action_mean
@@ -310,9 +304,6 @@ class Agent(nn.Module):
 
     def get_action_and_value(self, x, map_features=None, env_target_obj_idx=None, action=None, train_map_features: bool = True):
         features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        if not isinstance(features, dict):
-             raise RuntimeError("get_action_and_value is not supported in non-map mode with the new architecture.")
-
         action_mean, value = self.actor_critic(features)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)

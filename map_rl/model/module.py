@@ -337,7 +337,6 @@ class ActionTransformerDecoder(nn.Module):
         map_tok = features.get("map")
 
         B, _, d_model = visual_token.shape
-        
         # Build memory and padding mask
         memory_parts = []
         padding_masks = []

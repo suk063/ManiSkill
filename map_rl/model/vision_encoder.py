@@ -12,7 +12,7 @@ class DINO2DFeatureEncoder(nn.Module):
 
     def __init__(
         self,
-        embed_dim: int = 64,
+        embed_dim: int = 256,
         model_name: str = "dinov2_vits14",
         freeze_backbone: bool = False,
     ) -> None:
@@ -82,7 +82,7 @@ class PlainCNNFeatureEncoder(nn.Module):
     def __init__(
         self,
         in_channels: int = 3,
-        embed_dim: int = 64,
+        embed_dim: int = 256,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
