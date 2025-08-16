@@ -182,6 +182,8 @@ class Args:
     """the step limit for mapping"""
     map_update_freq: int = 5
     """the frequency of online map updates"""
+    map_start_iteration: int = 10000
+    """iteration to start using map features"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -468,6 +470,7 @@ if __name__ == "__main__":
         # Resample subset of environments for this epoch (train)
         # --------------------------------------------------------------
         # Resample next training subset using GridSampler
+        train_map_features = iteration >= args.map_start_iteration
         active_indices, grids = grid_sampler.sample()
         if not args.use_map:
             grids = None
@@ -528,7 +531,7 @@ if __name__ == "__main__":
             num_episodes = 0
             for step in range(args.num_eval_steps):
                 with torch.no_grad():
-                    action = agent.get_action(eval_obs, map_features=online_eval_grids if args.use_map else None, env_target_obj_idx=eval_infos['env_target_obj_idx'], deterministic=True)
+                    action = agent.get_action(eval_obs, map_features=online_eval_grids if args.use_map else None, env_target_obj_idx=eval_infos['env_target_obj_idx'], deterministic=True, train_map_features=train_map_features)
                 
                 eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
 
@@ -577,7 +580,7 @@ if __name__ == "__main__":
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs, map_features=online_grids if args.use_online_mapping else grids if args.use_map else None, env_target_obj_idx=next_env_target_obj_idx)
+                action, logprob, _, value = agent.get_action_and_value(next_obs, map_features=online_grids if args.use_online_mapping else grids, env_target_obj_idx=next_env_target_obj_idx, train_map_features=train_map_features)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -620,12 +623,12 @@ if __name__ == "__main__":
                     idx = torch.arange(args.num_envs, device=device)[done_mask]
                     if len(idx) > 0:
                         final_grids = [grid for i, grid in enumerate(online_grids if args.use_online_mapping else grids) if done_mask[i]] if args.use_map else None
-                        final_values[step, idx] = agent.get_value(final_obs, map_features=final_grids, env_target_obj_idx=final_info['env_target_obj_idx'][done_mask]).view(-1)
+                        final_values[step, idx] = agent.get_value(final_obs, map_features=final_grids, env_target_obj_idx=final_info['env_target_obj_idx'][done_mask], train_map_features=train_map_features).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
         # bootstrap value according to termination and truncation
         with torch.no_grad():
-            next_value = agent.get_value(next_obs, map_features=online_grids if args.use_online_mapping else grids if args.use_map else None, env_target_obj_idx=next_env_target_obj_idx).reshape(1, -1)
+            next_value = agent.get_value(next_obs, map_features=online_grids if args.use_online_mapping else grids, env_target_obj_idx=next_env_target_obj_idx, train_map_features=train_map_features).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -687,10 +690,10 @@ if __name__ == "__main__":
                 mb_inds = b_inds[start:end]
 
                 mb_grids = [grids[i % args.num_envs] for i in mb_inds] if args.use_map else None
-                if args.use_online_mapping:
+                if args.use_online_mapping and args.use_map:
                     mb_grids = [online_grids[i % args.num_envs] for i in mb_inds]
                 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], map_features=mb_grids, env_target_obj_idx=b_env_target_obj_idxs[mb_inds], action=b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], map_features=mb_grids, env_target_obj_idx=b_env_target_obj_idxs[mb_inds], action=b_actions[mb_inds], train_map_features=train_map_features)
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
                 # differentiable KL approximation for penalty term

@@ -140,6 +140,7 @@ class FeatureExtractor(nn.Module):
         observations: dict,
         map_features: Optional[List] = None,
         env_target_obj_idx: Optional[torch.Tensor] = None,
+        train_map_features: bool = True,
     ) -> torch.Tensor:
     
         B = observations["rgb"].size(0)
@@ -160,9 +161,9 @@ class FeatureExtractor(nn.Module):
             image_vec = self.global_proj(image_fmap) 
             encoded.append(image_vec)
             return torch.cat(encoded, dim=1)
-        
-        assert map_features is not None, "map_features must be provided when use_map=True"
 
+        assert map_features is not None, "map_features must be provided when use_map=True"
+        
         coords_batch, raw_batch = [], []
         for g in map_features:
             coords = g.levels[1].coords
@@ -177,10 +178,14 @@ class FeatureExtractor(nn.Module):
         # concat = [torch.cat([c, d], dim=-1) for c, d in zip(coords_batch, dec_split)]
         # pad_3d = torch.nn.utils.rnn.pad_sequence(concat, batch_first=True)  # (B, Lmax, 771)
         pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)  # (B, Lmax, 768)
-        map_vec = self.map_encoder(pad_3d)  # (B, 256)
+        if train_map_features:
+            map_vec = self.map_encoder(pad_3d)
+        else:
+            with torch.no_grad():
+                map_vec = self.map_encoder(pad_3d)
         encoded.append(map_vec)
 
-        if self.use_local_fusion:
+        if self.use_local_fusion and train_map_features:
             image_fmap = self._local_fusion(
                 observations=observations,
                 image_fmap=image_fmap,
@@ -249,15 +254,15 @@ class Agent(nn.Module):
 
     # Convenience helpers -----------------------------------------------------
 
-    def get_features(self, x, map_features=None, env_target_obj_idx=None):
-        return self.feature_net(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx)
+    def get_features(self, x, map_features=None, env_target_obj_idx=None, train_map_features: bool = True):
+        return self.feature_net(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
 
-    def get_value(self, x, map_features=None, env_target_obj_idx=None):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx)
+    def get_value(self, x, map_features=None, env_target_obj_idx=None, train_map_features: bool = True):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
         return self.critic(x)
 
-    def get_action(self, x, map_features=None, env_target_obj_idx=None, deterministic: bool = False):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx)
+    def get_action(self, x, map_features=None, env_target_obj_idx=None, deterministic: bool = False, train_map_features: bool = True):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
         action_mean = self.actor_mean(x)
         if deterministic:
             return action_mean
@@ -266,8 +271,8 @@ class Agent(nn.Module):
         probs = Normal(action_mean, action_std)
         return probs.sample()
 
-    def get_action_and_value(self, x, map_features=None, env_target_obj_idx=None, action=None):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx)
+    def get_action_and_value(self, x, map_features=None, env_target_obj_idx=None, action=None, train_map_features: bool = True):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
