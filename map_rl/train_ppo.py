@@ -182,7 +182,7 @@ class Args:
     """the step limit for mapping"""
     map_update_freq: int = 5
     """the frequency of online map updates"""
-    map_start_iteration: int = 10000
+    map_start_iteration: int = 10000000
     """iteration to start using map features"""
 
     # to be filled in runtime
