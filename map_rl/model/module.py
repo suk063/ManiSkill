@@ -30,13 +30,15 @@ class PointNet(nn.Module):
             nn.LayerNorm(256),
             nn.GELU(),
             layer_init(nn.Linear(256, output_dim)),
-            # nn.LayerNorm(output_dim),
-            # nn.GELU(),
         )
 
-    def forward(self, x):
-        x = self.net(x)
-        return torch.max(x, dim=1)[0]
+    def forward(self, x, pad_mask=None):   # pad_mask: (B, L) True=pad
+        h = self.net(x)                     # (B, L, C)
+        if pad_mask is not None:
+            h = h.masked_fill(pad_mask[..., None], float('-inf'))
+        out = h.max(dim=1).values           # (B, C)
+        out[out.eq(float('-inf'))] = 0
+        return out
 
 class TransformerLayer(nn.Module):
     def __init__(
