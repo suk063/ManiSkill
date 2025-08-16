@@ -77,7 +77,7 @@ class Args:
     """whether to include state information in observations"""
     total_timesteps: int = 10000000
     """total timesteps of the experiments"""
-    learning_rate: float = 3e-4
+    learning_rate: float = 5e-5
     """the learning rate of the optimizer"""
     num_envs: int = 400
     """the number of parallel environments"""
@@ -97,7 +97,7 @@ class Args:
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
-    camera_uids: List[str] = field(default_factory=lambda: ["base_camera", "hand_camera"])
+    camera_uids: List[str] = field(default_factory=lambda: ["base_camera"])
     """the camera to use for the environment"""
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
@@ -113,7 +113,7 @@ class Args:
     """Toggles advantages normalization"""
     clip_coef: float = 0.2
     """the surrogate clipping coefficient"""
-    clip_vloss: bool = True
+    clip_vloss: bool = False
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
     ent_coef: float = 0.0
     """coefficient of the entropy"""
@@ -125,7 +125,7 @@ class Args:
     """the target KL divergence threshold"""
 
     # KL penalty (adaptive)
-    use_kl_penalty: bool = True
+    use_kl_penalty: bool = False
     """if toggled, add KL penalty term to the policy loss and adapt its coef."""
     kl_coef: float = 1.0
     """initial coefficient for KL penalty term"""
@@ -138,7 +138,7 @@ class Args:
     kl_coef_max: float = 10.0
     """upper bound for kl_coef when adapting"""
     # Dual-Clip PPO
-    dual_clip: Optional[float] = 2.0
+    dual_clip: Optional[float] = None
     """if set, enable Dual-Clip with this coefficient (e.g., 2.0)."""
     reward_scale: float = 1.0
     """Scale the reward by this factor"""
