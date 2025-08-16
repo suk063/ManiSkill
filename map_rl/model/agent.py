@@ -187,16 +187,17 @@ class FeatureExtractor(nn.Module):
         dec_split = dec_cat.split([c.size(0) for c in coords_batch], dim=0)
 
         lengths = [c.size(0) for c in coords_batch]
-        Lmax = max(lengths)
+        pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)  # (B, Lmax, 768)
+        Lmax = pad_3d.size(1)
+
         pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
                 torch.tensor(lengths, device=pad_3d.device)[:, None]
-                
-        pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)  # (B, Lmax, 768)
         if train_map_features:
             map_vec = self.map_encoder(pad_3d, pad_mask)
         else:
             with torch.no_grad():
                 map_vec = self.map_encoder(pad_3d, pad_mask)
+            
         encoded.append(map_vec)
         
         if self.use_local_fusion and train_map_features:
