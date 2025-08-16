@@ -64,7 +64,7 @@ class FeatureExtractor(nn.Module):
 
             if self.use_local_fusion:
                 self.map_feature_proj = nn.Linear(map_raw_dim, self.vision_encoder.embed_dim)
-                self.local_fusion = LocalFeatureFusion(dim=self.vision_encoder.embed_dim, k=8, radius=0.12, num_layers=1)
+                self.local_fusion = LocalFeatureFusion(dim=self.vision_encoder.embed_dim, k=1, radius=0.12, num_layers=1)
 
         # --------------------------------------------------------------- State
         self.state_proj = None

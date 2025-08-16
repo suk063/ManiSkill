@@ -38,10 +38,10 @@ run_cfg() {
 #   --vision_encoder=plain_cnn
 
 # 2) plain-cnn / map / no local fusion
-run_cfg plain-cnn-map-no-local-fusion \
-  --use_map \
-  --vision_encoder=plain_cnn \
-  --checkpoint=runs/PickYCB_xarm6_ppo__plain-cnn-map-local-fusion/ckpt_latest.pt
+# run_cfg plain-cnn-map-no-local-fusion \
+#   --use_map \
+#   --vision_encoder=plain_cnn \
+  # --checkpoint=runs/PickYCB_xarm6_ppo__plain-cnn-map-local-fusion/ckpt_latest.pt
 
 # 3) plain-cnn / map / local fusion
 # run_cfg plain-cnn-map-local-fusion \
@@ -55,9 +55,9 @@ run_cfg plain-cnn-map-no-local-fusion \
 #   --vision_encoder=dino
 
 # 5) dino / map / no local fusion
-# run_cfg dino-map-no-local-fu sion \
-#   --use_map \
-#   --vision_encoder=dino
+run_cfg dino-map-no-local-fusion \
+  --use_map \
+  --vision_encoder=dino
 
 # 6) dino / map / local fusion
 # run_cfg dino-map-local-fusion \
