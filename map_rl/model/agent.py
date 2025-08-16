@@ -6,7 +6,7 @@ from torch.distributions.normal import Normal
 import gymnasium as gym
 from typing import Optional, List, Union
 import xformers.ops as xops
-from model.module import PointNet, LocalFeatureFusion, layer_init
+from model.module import PointNet, LocalFeatureFusion, layer_init, ActionTransformerDecoder
 from utils.operator import get_3d_coordinates
 from model.vision_encoder import DINO2DFeatureEncoder, PlainCNNFeatureEncoder
 from torchvision import transforms
@@ -145,18 +145,18 @@ class FeatureExtractor(nn.Module):
         map_features: Optional[List] = None,
         env_target_obj_idx: Optional[torch.Tensor] = None,
         train_map_features: bool =False,
-    ) -> torch.Tensor:
+    ) -> Union[torch.Tensor, dict]:
     
         B = observations["rgb"].size(0)
-        encoded: List[torch.Tensor] = []
+        features: dict[str, torch.Tensor] = {}
 
         if self.state_proj is not None:
-            encoded.append(self.state_proj(observations["state"]))
+            features["state"] = self.state_proj(observations["state"]).unsqueeze(1)
 
         if self.text_proj is not None:
             assert env_target_obj_idx is not None, "env_target_obj_idx must be provided when using text embeddings"
             target_text_embeddings = self.text_embeddings[env_target_obj_idx]
-            encoded.append(self.text_proj(target_text_embeddings))
+            features["text"] = self.text_proj(target_text_embeddings).unsqueeze(1)
 
         # 1. Process multiple camera inputs by batching them
         rgb_all_cameras = observations["rgb"].float().permute(0, 3, 1, 2) / 255.0
@@ -169,7 +169,12 @@ class FeatureExtractor(nn.Module):
         if not self.use_map:
             image_vec = self.global_proj(image_fmap)
             image_vecs = torch.chunk(image_vec, self.num_cameras, dim=0)
-            encoded.extend(list(image_vecs))
+            features["visual"] = torch.stack(list(image_vecs), dim=1)
+            
+            encoded = []
+            if "state" in features: encoded.append(features["state"].squeeze(1))
+            if "text" in features: encoded.append(features["text"].squeeze(1))
+            encoded.append(features["visual"].reshape(B, -1))
             return torch.cat(encoded, dim=1)
 
         assert map_features is not None, "map_features must be provided when use_map=True"
@@ -198,7 +203,7 @@ class FeatureExtractor(nn.Module):
             with torch.no_grad():
                 map_vec = self.map_encoder(pad_3d, pad_mask)
             
-        encoded.append(map_vec)
+        features["map"] = map_vec.unsqueeze(1)
         
         if self.use_local_fusion and train_map_features:
             # Fuse each camera's image_fmap with the same map features
@@ -225,9 +230,9 @@ class FeatureExtractor(nn.Module):
         
         image_vec = self.global_proj(image_fmap)                                # B * num_cameras, 256
         image_vecs = torch.chunk(image_vec, self.num_cameras, dim=0)
-        encoded.extend(list(image_vecs))
+        features["visual"] = torch.stack(list(image_vecs), dim=1)
 
-        return torch.cat(encoded, dim=1)
+        return features
 
 class Agent(nn.Module):
     """Actor-Critic network (Gaussian continuous actions) built on NatureCNN features."""
@@ -259,24 +264,17 @@ class Agent(nn.Module):
         )
         latent_size = self.feature_net.output_dim
         
-        # Critic
-        self.critic = nn.Sequential(
-            nn.LayerNorm(latent_size),
-            layer_init(nn.Linear(latent_size, 512)),
-            nn.GELU(),
-            layer_init(nn.Linear(512, 1)),
+        self.actor_critic = ActionTransformerDecoder(
+            d_model=256,
+            transf_input_dim=256,
+            nhead=8,
+            num_decoder_layers=4,
+            dim_feedforward=1024,
+            dropout=0.1,
+            action_dim=int(np.prod(envs.unwrapped.single_action_space.shape)),
+            action_pred_horizon=1
         )
-
-        # Actor: mean of Gaussian policy
-        self.actor_mean = nn.Sequential(
-            nn.LayerNorm(latent_size),
-            layer_init(nn.Linear(latent_size, 512)),
-            nn.GELU(),
-            layer_init(
-                nn.Linear(512, int(np.prod(envs.unwrapped.single_action_space.shape))),
-                std=0.01 * np.sqrt(2),
-            ),
-        )
+        
         # Log-std is state-independent
         self.actor_logstd = nn.Parameter(
             torch.ones(1, int(np.prod(envs.unwrapped.single_action_space.shape))) * -0.5
@@ -289,12 +287,20 @@ class Agent(nn.Module):
         return self.feature_net(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
 
     def get_value(self, x, map_features=None, env_target_obj_idx=None, train_map_features: bool = True):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        return self.critic(x)
+        features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
+        if isinstance(features, dict):
+            _, value = self.actor_critic(features)
+            return value
+        else: # Fallback for non-map mode which returns concatenated features
+            raise RuntimeError("get_value is not supported in non-map mode with the new architecture.")
+
 
     def get_action(self, x, map_features=None, env_target_obj_idx=None, deterministic: bool = False, train_map_features: bool = True):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        action_mean = self.actor_mean(x)
+        features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
+        if not isinstance(features, dict):
+             raise RuntimeError("get_action is not supported in non-map mode with the new architecture.")
+        
+        action_mean, _ = self.actor_critic(features)
         if deterministic:
             return action_mean
         action_logstd = self.actor_logstd.expand_as(action_mean)
@@ -303,8 +309,11 @@ class Agent(nn.Module):
         return probs.sample()
 
     def get_action_and_value(self, x, map_features=None, env_target_obj_idx=None, action=None, train_map_features: bool = True):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
-        action_mean = self.actor_mean(x)
+        features = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
+        if not isinstance(features, dict):
+             raise RuntimeError("get_action_and_value is not supported in non-map mode with the new architecture.")
+
+        action_mean, value = self.actor_critic(features)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
@@ -314,5 +323,5 @@ class Agent(nn.Module):
             action,
             probs.log_prob(action).sum(1),
             probs.entropy().sum(1),
-            self.critic(x),
+            value,
         )

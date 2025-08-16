@@ -19,6 +19,13 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
+
+def init_weights_kaiming(m):
+    if isinstance(m, nn.Linear):
+        nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0.0)
+
 class PointNet(nn.Module):
     def __init__(self, input_dim, output_dim=256):
         super().__init__()
@@ -239,3 +246,141 @@ class LocalFeatureFusion(nn.Module):
         final_feat, _ = to_dense_batch(out, q_batch, batch_size=B, max_num_nodes=N)
 
         return final_feat
+
+class XformerDecoderLayer(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward, dropout):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
+
+        self.activation = F.relu
+
+    def forward(self, tgt, memory, tgt_mask_bias=None, memory_key_padding_mask=None):
+        # self attention
+        tgt2 = self.norm1(tgt)
+        q = k = tgt2
+        
+        # Convert bias to mask
+        if tgt_mask_bias is not None:
+            # Assuming LowerTriangularMask creates a matrix that can be converted to a boolean mask
+            attn_mask = (tgt_mask_bias.materialize((tgt.size(1), tgt.size(1)), dtype=torch.bool, device=tgt.device))
+        else:
+            attn_mask = None
+
+        tgt2 = self.self_attn(q, k, value=tgt2, attn_mask=attn_mask)[0]
+        tgt = tgt + self.dropout1(tgt2)
+
+        # cross attention
+        tgt2 = self.norm2(tgt)
+        tgt2 = self.cross_attn(query=tgt2,
+                               key=memory,
+                               value=memory,
+                               key_padding_mask=memory_key_padding_mask)[0]
+        tgt = tgt + self.dropout2(tgt2)
+        
+        # ffn
+        tgt2 = self.norm3(tgt)
+        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
+        tgt = tgt + self.dropout3(tgt2)
+        return tgt
+
+class ActionTransformerDecoder(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        transf_input_dim: int,
+        nhead: int,
+        num_decoder_layers: int,
+        dim_feedforward: int,
+        dropout: float,
+        action_dim: int,
+        action_pred_horizon: int = 1,
+    ):
+        super().__init__()
+        
+        self.query_embed = nn.Embedding(action_pred_horizon, d_model)
+        
+        self.layers = nn.ModuleList([
+            XformerDecoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+            )
+            for _ in range(num_decoder_layers)
+        ])
+        
+        self.action_head = nn.Linear(d_model, action_dim)
+        self.value_head = nn.Linear(d_model, 1)
+        self.action_pred_horizon = action_pred_horizon
+
+        self.memory_proj = nn.Linear(transf_input_dim, d_model)
+        self.apply(init_weights_kaiming)
+
+        self.causal_attn_bias = xops.LowerTriangularMask()
+        
+    def forward(self, features: dict) -> torch.Tensor:
+        visual_token = features.get("visual")
+        state_tok = features.get("state")
+        text_emb = features.get("text")
+        map_tok = features.get("map")
+
+        B, _, d_model = visual_token.shape
+        
+        # Build memory and padding mask
+        memory_parts = []
+        padding_masks = []
+
+        if visual_token is not None:
+            memory_parts.append(visual_token)
+            padding_masks.append(torch.zeros((B, visual_token.shape[1]), device=visual_token.device, dtype=torch.bool))
+        if state_tok is not None:
+            memory_parts.append(state_tok)
+            padding_masks.append(torch.zeros((B, 1), device=state_tok.device, dtype=torch.bool))
+        if text_emb is not None:
+            memory_parts.append(text_emb)
+            padding_masks.append(torch.zeros((B, 1), device=text_emb.device, dtype=torch.bool))
+        if map_tok is not None:
+            memory_parts.append(map_tok)
+            padding_masks.append(torch.zeros((B, 1), device=map_tok.device, dtype=torch.bool))
+
+        tokens = torch.cat(memory_parts, dim=1)
+        tokens = self.memory_proj(tokens)
+        memory_key_padding_mask = torch.cat(padding_masks, dim=1)
+
+        # Pad memory to a multiple of 8 for xformers efficiency, as required by some kernels (e.g. cutlass)
+        S = tokens.shape[1]
+        pad_to = (S + 7) & (-8)
+        if S < pad_to:
+            pad_len = pad_to - S
+            tokens = F.pad(tokens, (0, 0, 0, pad_len), 'constant', 0)
+            mask_pad = torch.ones(B, pad_len, device=tokens.device, dtype=torch.bool)
+            memory_key_padding_mask = torch.cat([memory_key_padding_mask, mask_pad], dim=1)
+
+
+        query_pos = self.query_embed.weight.unsqueeze(0).repeat(B, 1, 1)
+
+        decoder_out = query_pos
+        for layer in self.layers:
+            decoder_out = layer(
+                tgt=decoder_out,
+                memory=tokens,
+                tgt_mask_bias=self.causal_attn_bias,
+                memory_key_padding_mask=memory_key_padding_mask,
+            )
+        
+        decoder_out = decoder_out[:, 0] # Take the first and only timestep
+        action_out = self.action_head(decoder_out)
+        value_out = self.value_head(decoder_out)
+        return action_out, value_out

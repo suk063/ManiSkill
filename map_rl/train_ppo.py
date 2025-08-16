@@ -113,7 +113,7 @@ class Args:
     """Toggles advantages normalization"""
     clip_coef: float = 0.2
     """the surrogate clipping coefficient"""
-    clip_vloss: bool = False
+    clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
     ent_coef: float = 0.0
     """coefficient of the entropy"""
@@ -686,6 +686,8 @@ if __name__ == "__main__":
         b_inds = np.arange(args.batch_size)
         clipfracs = []
         update_time = time.perf_counter()
+        # a fix for a potential NameError when the inner loop breaks early.
+        pg_loss, v_loss, entropy_loss, old_approx_kl, approx_kl = (torch.zeros(1, device=device) for _ in range(5))
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             for start in range(0, args.batch_size, args.minibatch_size):

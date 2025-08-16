@@ -1,6 +1,7 @@
 import gymnasium as gym
 import numpy as np
 import torch
+import torch.nn as nn
 import wandb
 from torch.utils.tensorboard import SummaryWriter
 import mani_skill
