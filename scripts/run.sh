@@ -34,8 +34,8 @@ run_cfg() {
 }
 
 run_cfg dino-map-local-fusion \
+  --vision_encoder=dino \
   # --use_map \
   # --use_local_fusion \
-  # --vision_encoder=dino W\
   # --map_start_iteration=10000000 \
   # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion/ckpt_latest.pt

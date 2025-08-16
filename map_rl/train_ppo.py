@@ -184,7 +184,7 @@ class Args:
     """the frequency of online map updates"""
     map_start_iteration: int = 10000000
     """iteration to start using map features"""
-    state_only: bool = True
+    state_only: bool = False
     """if toggled, use only state and text embeddings for the agent"""
 
     # to be filled in runtime
@@ -331,7 +331,7 @@ if __name__ == "__main__":
     #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="state", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim, camera_uids=args.camera_uids)
+    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim, camera_uids=args.camera_uids)
     # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode

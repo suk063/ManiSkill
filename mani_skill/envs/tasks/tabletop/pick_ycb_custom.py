@@ -105,6 +105,10 @@ class PickYCBCustomEnv(BaseEnv):
 
         # Ignore gripper finger pads for collision checking
         force_rew_ignore_links = [
+            "left_outer_finger",
+            "right_outer_finger",
+            "left_inner_finger",
+            "right_inner_finger",
             "left_inner_finger_pad",
             "right_inner_finger_pad",
         ]
@@ -384,7 +388,7 @@ class PickYCBCustomEnv(BaseEnv):
 
         # penalty for ee moving too much when not grasping
         ee_vel = self.agent.tcp.linear_velocity
-        ee_still_rew = 1 - torch.tanh(torch.norm(ee_vel, dim=1) / 5)
+        ee_still_rew = (1 - torch.tanh(torch.norm(ee_vel, dim=1) / 3)) * 2
         reward += ee_still_rew
 
         # colliisions penalty
@@ -412,6 +416,7 @@ class PickYCBCustomEnv(BaseEnv):
             ).float()
         )
         reward += cum_col_under_thresh_rew
+        
         return reward
 
 
