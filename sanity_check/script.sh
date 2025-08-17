@@ -1,14 +1,33 @@
-python sanity_check/ppo_state.py \
+# python sanity_check/ppo_state.py \
+#     --env_id=PickYCBCustom-v1 \
+#     --control_mode=pd_joint_vel \
+#     --exp_name=YCB_custom_xarm6_ppo_state \
+#     --num_envs=100 \
+#     --num_eval_envs=20 \
+#     --eval_freq=20 \
+#     --total_timesteps=100_000_000 \
+#     --num_steps=200 \
+#     --num_eval_steps=200 \
+#     --gamma=0.9 \
+#     --capture-video \
+#     --track \
+#     --wandb_project_name "PPO-RL-Map"
+
+
+python sanity_check/ppo_rgb.py \
     --env_id=PickYCBCustom-v1 \
     --control_mode=pd_joint_vel \
-    --exp_name=YCB_custom_xarm6_ppo_state \
+    --exp_name=YCB_custom_xarm6_ppo_rgb \
     --num_envs=100 \
     --num_eval_envs=20 \
+    --update_epochs=8 \
+    --num_minibatches=32 \
     --eval_freq=20 \
     --total_timesteps=100_000_000 \
     --num_steps=200 \
     --num_eval_steps=200 \
     --gamma=0.9 \
+    --gae_lambda=0.95 \
     --capture-video \
     --track \
     --wandb_project_name "PPO-RL-Map"
