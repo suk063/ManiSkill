@@ -138,7 +138,7 @@ class PickYCBCustomEnv(BaseEnv):
         self.env_target_obj_idx = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
         self.env_target_obj_half_height = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         for i in range(self.num_envs):
-            obj_idx = i % len(self.model_ids)  # Which object type this environment should pick
+            obj_idx = 0  # Always pick the first object ("005_tomato_soup_can")
             model_id = self.model_ids[obj_idx]
             half_height = self.ycb_half_heights_m[model_id]
             self.env_target_obj_half_height[i] = half_height
