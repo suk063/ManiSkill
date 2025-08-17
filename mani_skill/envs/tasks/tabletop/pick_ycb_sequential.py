@@ -20,7 +20,7 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-@register_env("PickYCBSequential-v1", max_episode_steps=300)
+@register_env("PickYCBSequential-v1", max_episode_steps=200)
 class PickYCBSequentialEnv(BaseEnv):
 
     SUPPORTED_ROBOTS = [

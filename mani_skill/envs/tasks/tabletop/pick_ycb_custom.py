@@ -20,7 +20,7 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-@register_env("PickYCBCustom-v1", max_episode_steps=200)
+@register_env("PickYCBCustom-v1", max_episode_steps=100)
 class PickYCBCustomEnv(BaseEnv):
 
     SUPPORTED_ROBOTS = [

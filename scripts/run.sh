@@ -17,6 +17,7 @@ COMMON_ARGS=(
   --num_steps=200
   --num_eval_steps=200
   --gamma=0.99
+  --gae_lambda=0.95
   --update_epochs=8
   --capture-video
   --track
