@@ -14,11 +14,11 @@ from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs.pose import Pose
 from mani_skill.utils.structs import Actor, GPUMemoryConfig, SimConfig
-from .pick_ycb_custom import PickYCBCustomEnv
+from .pick_ycb_sequential import PickYCBSequentialEnv
 
 
 @register_env("PickYCBCustomNoRobot-v1", max_episode_steps=50)
-class PickYCBCustomNoRobotEnv(PickYCBCustomEnv):
+class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
     
     def __init__(self, *args, grid_dim: int = 15, **kwargs):
         super().__init__(*args, grid_dim=grid_dim, robot_uids=[], robot_init_qpos_noise=0.0, **kwargs)
@@ -35,7 +35,7 @@ class PickYCBCustomNoRobotEnv(PickYCBCustomEnv):
         )
         fixed_cam_pose = sapien_utils.look_at(eye=[0.508, -0.5, 0.42], target=[-0.522, 0.2, 0])
         return [
-            CameraConfig("hand_cam", pose=fixed_cam_pose, width=224, height=224, fov=np.pi/2, near=0.01, far=100),
+            CameraConfig("hand_cam", pose=fixed_cam_pose, width=224, height=224, fov=np.pi / 3, near=0.01, far=100),
             moving_camera
         ]
 
