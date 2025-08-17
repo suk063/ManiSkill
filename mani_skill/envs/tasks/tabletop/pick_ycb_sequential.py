@@ -275,7 +275,8 @@ class PickYCBSequentialEnv(BaseEnv):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
         obs = dict(
             # env_target_obj_idx=self.env_target_obj_idx,
-            is_grasped=info["is_grasped"],
+            is_grasped_obj_1=info["is_grasped_obj_1"],
+            is_grasped_obj_2=info["is_grasped_obj_2"],
             # tcp_pose=self.agent.tcp.pose.raw_pose,
             # basket_pos=self.basket.pose.p,
         )
