@@ -6,3 +6,4 @@ from .table_scan_discrete import TableScanDiscreteInitEnv
 from .table_scan_discrete_no_robot import TableScanDiscreteNoRobotEnv
 from .pick_ycb_custom import PickYCBCustomEnv
 from .pick_ycb_custom_no_robot import PickYCBCustomNoRobotEnv
+from .pick_ycb_sequential import PickYCBSequentialEnv
