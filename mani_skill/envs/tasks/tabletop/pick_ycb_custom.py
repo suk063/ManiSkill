@@ -388,14 +388,14 @@ class PickYCBCustomEnv(BaseEnv):
 
         # penalty for ee moving too much when not grasping
         ee_vel = self.agent.tcp.linear_velocity
-        ee_still_rew = (1 - torch.tanh(torch.norm(ee_vel, dim=1) / 3)) * 2
+        ee_still_rew = (1 - torch.tanh(torch.norm(ee_vel, dim=1) / 3)) * 1
         reward += ee_still_rew
 
         # colliisions penalty
-        step_no_col_rew = 3 * (
+        step_no_col_rew = 0.5 * (
             1
             - torch.tanh(
-                3
+                5
                 * (
                     torch.clamp(
                         self.robot_force_mult * info["robot_force"],
@@ -409,7 +409,7 @@ class PickYCBCustomEnv(BaseEnv):
 
         # cumulative collision penalty
         cum_col_under_thresh_rew = (
-            2
+            0.5
             * (
                 info["robot_cumulative_force"]
                 < self.robot_cumulative_force_limit
