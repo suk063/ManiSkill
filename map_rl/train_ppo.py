@@ -97,7 +97,7 @@ class Args:
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
-    camera_uids: List[str] = field(default_factory=lambda: ["hand_camera"]) #  field(default_factory=lambda: ["base_camera", "hand_camera"])
+    camera_uids: List[str] = field(default_factory=lambda: ["base_camera", "hand_camera"])
     """the camera to use for the environment"""
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
@@ -147,6 +147,10 @@ class Args:
     save_train_video_freq: Optional[int] = None
     """frequency to save training videos in terms of iterations"""
     finite_horizon_gae: bool = False
+
+    # task specification
+    # (NOTE): the order should match the order of the model_ids in the env
+    model_ids: List[str] = field(default_factory=lambda: ["tomato_soup_can", "gelatin_box", "bowl", "apple", "banana"])
 
     # Environment discretisation
     grid_dim: int = 10
@@ -209,20 +213,36 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
     args.device = device
 
-    if args.use_online_mapping:
-        # --- Load CLIP model for text and online mapping ---
-        print("--- Loading CLIP model ---")
-        clip_model_name = "EVA02-L-14"
-        clip_weights_id = "merged2b_s4b_b131k"
-        clip_model, _, _ = open_clip.create_model_and_transforms(
-            clip_model_name, pretrained=clip_weights_id
-        )
-        clip_model = clip_model.to(device)
+    # --- Load CLIP model for text and online mapping ---
+    print("--- Loading CLIP model ---")
+    clip_model_name = "EVA02-L-14"
+    clip_weights_id = "merged2b_s4b_b131k"
+    clip_model, _, _ = open_clip.create_model_and_transforms(
+        clip_model_name, pretrained=clip_weights_id
+    )
+    clip_model = clip_model.to(device)
+    
+    # --- Generate text embeddings for model_ids ---
+    text_input = [f"pick up the {s.replace('_', ' ')}" for s in args.model_ids]
+    tokenizer = open_clip.get_tokenizer(clip_model_name)
+    text_tokens = tokenizer(text_input).to(device)
+    with torch.no_grad():
+        text_embeddings = clip_model.encode_text(text_tokens)
+        text_embeddings = F.normalize(text_embeddings, dim=-1, p=2)
+    print("--- Text embeddings generated ---")
 
+    # Add camera_uids to args to be accessed by mapping functions
+    args.camera_uids = args.camera_uids
+
+    if args.use_online_mapping:
         print("--- Setting CLIP model for online mapping ---")
         clip_model.eval()
         for param in clip_model.parameters():
             param.requires_grad = False
+    else:
+        del clip_model, tokenizer
+        clip_model = None
+        print("--- CLIP model removed from memory ---")
 
     # --- Load Maps and Decoder ---
     # Always define total number of discrete environments
@@ -380,11 +400,15 @@ if __name__ == "__main__":
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    env_target_obj_idxs = torch.zeros((args.num_steps, args.num_envs), dtype=torch.long).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
     next_obs, infos = envs.reset(seed=args.seed, options={'global_idx': active_indices.tolist()})
+    next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
+    next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']
+    next_success_obj_1 = infos['success_obj_1']
     if args.use_map:
         eval_grids = [all_grids[i] for i in eval_indices]
     else:
@@ -401,6 +425,7 @@ if __name__ == "__main__":
         decoder=decoder if args.use_map else None, 
         use_local_fusion=args.use_local_fusion, 
         vision_encoder=args.vision_encoder,
+        text_embeddings=text_embeddings,
         camera_uids=args.camera_uids,
     ).to(device)
     # Use differential learning rates for DINO backbone vs. the rest
@@ -496,11 +521,37 @@ if __name__ == "__main__":
                 online_eval_grids = eval_grids
                 eval_map_optimizer = None
 
+            # (NOTE): debugging code to save target objects ---
+            # target_obj_indices = eval_infos['env_target_obj_idx_1'].cpu().numpy()
+            # target_obj_indices_2 = eval_infos['env_target_obj_idx_2'].cpu().numpy()
+            # target_obj_names = [args.model_ids[i] for i in target_obj_indices]
+            # target_obj_names_2 = [args.model_ids[i] for i in target_obj_indices_2]
+            # output_path = os.path.join(f"runs/{run_name}", "eval_target_objects.txt")
+            # os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            # with open(output_path, "w") as f:
+            #     for i, name in enumerate(target_obj_names):
+            #         f.write(f"eval_env_{i}: {name}\n")
+            #     for i, name in enumerate(target_obj_names_2):
+            #         f.write(f"eval_env_{i}: {name}\n")
+            # print(f"Saved eval target objects to {output_path}")
+            # --- End of debugging code ---
+
             eval_metrics = defaultdict(list)
             num_episodes = 0
             for step in range(args.num_eval_steps):
                 with torch.no_grad():
-                    action = agent.get_action(eval_obs, map_features=online_eval_grids if args.use_map else None, deterministic=True, train_map_features=train_map_features)
+                    eval_target_obj_idx = torch.where(
+                        eval_infos['success_obj_1'], 
+                        eval_infos['env_target_obj_idx_2'], 
+                        eval_infos['env_target_obj_idx_1']
+                    )
+                    action = agent.get_action(
+                        eval_obs,
+                        map_features=online_eval_grids if args.use_map else None,
+                        env_target_obj_idx=eval_target_obj_idx,
+                        deterministic=True,
+                        train_map_features=train_map_features
+                    )
                 
                 eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
 
@@ -545,10 +596,21 @@ if __name__ == "__main__":
             global_step += args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
+            next_env_target_obj_idx = torch.where(
+                next_success_obj_1,
+                next_env_target_obj_idx_2,
+                next_env_target_obj_idx_1
+            )
+            env_target_obj_idxs[step] = next_env_target_obj_idx
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs, map_features=online_grids if args.use_online_mapping else grids, train_map_features=train_map_features)
+                action, logprob, _, value = agent.get_action_and_value(
+                    next_obs,
+                    map_features=online_grids if args.use_online_mapping else grids,
+                    env_target_obj_idx=next_env_target_obj_idx,
+                    train_map_features=train_map_features
+                )
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -556,6 +618,9 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action)
 
+            next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
+            next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']
+            next_success_obj_1 = infos['success_obj_1']
             
             # Online map update
             if args.use_online_mapping:
@@ -589,12 +654,32 @@ if __name__ == "__main__":
                     idx = torch.arange(args.num_envs, device=device)[done_mask]
                     if len(idx) > 0:
                         final_grids = [grid for i, grid in enumerate(online_grids if args.use_online_mapping else grids) if done_mask[i]] if args.use_map else None
-                        final_values[step, idx] = agent.get_value(final_obs, map_features=final_grids, train_map_features=train_map_features).view(-1)
+                        final_env_target_obj_idx = torch.where(
+                            final_info['success_obj_1'][done_mask],
+                            final_info['env_target_obj_idx_2'][done_mask],
+                            final_info['env_target_obj_idx_1'][done_mask]
+                        )
+                        final_values[step, idx] = agent.get_value(
+                            final_obs,
+                            map_features=final_grids,
+                            env_target_obj_idx=final_env_target_obj_idx,
+                            train_map_features=train_map_features
+                        ).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
         # bootstrap value according to termination and truncation
         with torch.no_grad():
-            next_value = agent.get_value(next_obs, map_features=online_grids if args.use_online_mapping else grids, train_map_features=train_map_features).reshape(1, -1)
+            next_env_target_obj_idx = torch.where(
+                next_success_obj_1,
+                next_env_target_obj_idx_2,
+                next_env_target_obj_idx_1
+            )
+            next_value = agent.get_value(
+                next_obs,
+                map_features=online_grids if args.use_online_mapping else grids,
+                env_target_obj_idx=next_env_target_obj_idx,
+                train_map_features=train_map_features
+            ).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -642,6 +727,7 @@ if __name__ == "__main__":
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
+        b_env_target_obj_idxs = env_target_obj_idxs.reshape(-1)
 
         # Optimizing the policy and value network
         agent.train()
@@ -658,7 +744,13 @@ if __name__ == "__main__":
                 if args.use_online_mapping and args.use_map:
                     mb_grids = [online_grids[i % args.num_envs] for i in mb_inds]
                 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], map_features=mb_grids, action=b_actions[mb_inds], train_map_features=train_map_features)
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(
+                    b_obs[mb_inds],
+                    map_features=mb_grids,
+                    env_target_obj_idx=b_env_target_obj_idxs[mb_inds],
+                    action=b_actions[mb_inds],
+                    train_map_features=train_map_features
+                )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
                 # differentiable KL approximation for penalty term

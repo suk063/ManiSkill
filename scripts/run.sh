@@ -7,15 +7,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 COMMON_ARGS=(
-  --env_id=PickYCBCustom-v1 # PickYCBCustom-v1
+  --env_id=PickYCBSequential-v1 # PickYCBCustom-v1
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
-  --num_envs=100
+  --num_envs=50
   --num_eval_envs=20
   --eval_freq=20
   --total_timesteps=100_000_000
-  --num_steps=200
-  --num_eval_steps=200
+  --num_steps=300
+  --num_eval_steps=300
   --gamma=0.99
   --gae_lambda=0.95
   --update_epochs=8
@@ -39,4 +39,4 @@ run_cfg dino-map-local-fusion \
   --use_local_fusion \
   --vision_encoder=dino \
   --map_start_iteration=10000000 \
-  # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion/ckpt_latest.pt
+  # --checkpoint=pretrained/ckpt_latest.pt \
