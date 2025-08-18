@@ -56,7 +56,11 @@ class PickYCBSequentialEnv(BaseEnv):
             "024_bowl":            0.053 / 2.0,
         }
 
-        self.spawn_z_clearance = 0.001 
+        self.spawn_z_clearance = 0.001
+
+        self.robot_cumulative_force_limit = 5000
+        self.robot_force_mult = 0.001
+        self.robot_force_penalty_min = 0.2 
 
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
@@ -100,6 +104,21 @@ class PickYCBSequentialEnv(BaseEnv):
 
     def _load_agent(self, options: dict, initial_agent_poses = sapien.Pose(p=[-0.615, 0, 0]), build_separate: bool = False):
         super()._load_agent(options, initial_agent_poses, build_separate)
+
+        # Ignore gripper finger pads for collision checking
+        force_rew_ignore_links = [
+            "left_outer_finger",
+            "right_outer_finger",
+            "left_inner_finger",
+            "right_inner_finger",
+            "left_inner_finger_pad",
+            "right_inner_finger_pad",
+        ]
+        self.force_articulation_link_names = [
+            link.name
+            for link in self.agent.robot.get_links()
+            if link.name not in force_rew_ignore_links
+        ]
 
     def _load_scene(self, options: dict):
         self.table_scene = TableSceneBuilder(
@@ -263,6 +282,8 @@ class PickYCBSequentialEnv(BaseEnv):
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
+            if not hasattr(self, "robot_cumulative_force"):
+                self.robot_cumulative_force = torch.zeros(self.num_envs, device=self.device)
             self.table_scene.initialize(env_idx)
             self._initialize_ycb_objects(env_idx)
         
@@ -270,6 +291,7 @@ class PickYCBSequentialEnv(BaseEnv):
                 self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
             else:
                 self.stage1_done[env_idx] = False
+            self.robot_cumulative_force[env_idx] = 0.0
     
     def _get_obs_extra(self, info: Dict):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
@@ -317,8 +339,8 @@ class PickYCBSequentialEnv(BaseEnv):
         entering_basket_z_flag_2 = obj_bottom_z_2 < (basket_top_z - z_margin)
         
         # placed_in_basket_z_flag: True if the object is entirely inside the basket (vertically).
-        placed_in_basket_z_flag_1 = (obj_bottom_z_1 > basket_bottom_z + z_margin) & (obj_top_z_1 < basket_top_z - z_margin)
-        placed_in_basket_z_flag_2 = (obj_bottom_z_2 > basket_bottom_z + z_margin) & (obj_top_z_2 < basket_top_z - z_margin)
+        placed_in_basket_z_flag_1 = (obj_bottom_z_1 > basket_bottom_z) & (obj_top_z_1 < basket_top_z - z_margin)
+        placed_in_basket_z_flag_2 = (obj_bottom_z_2 > basket_bottom_z) & (obj_top_z_2 < basket_top_z - z_margin)
         
         is_entering_basket_obj_1 = torch.logical_and(xy_flag_1, entering_basket_z_flag_1)
         is_entering_basket_obj_2 = torch.logical_and(xy_flag_2, entering_basket_z_flag_2)
@@ -338,6 +360,11 @@ class PickYCBSequentialEnv(BaseEnv):
         self.stage1_done = current_stage1_done
         success = success_2 & is_robot_static
 
+        # calculate and update robot force
+        robot_force_on_links = self.agent.robot.get_net_contact_forces(self.force_articulation_link_names)
+        robot_force = torch.sum(torch.norm(robot_force_on_links, dim=-1), dim=-1)
+        self.robot_cumulative_force += robot_force
+
         return {
             "prev_stage1_done": prev_stage1_done,
             "env_target_obj_idx_1": self.env_target_obj_idx_1,
@@ -353,7 +380,9 @@ class PickYCBSequentialEnv(BaseEnv):
             "is_robot_static": is_robot_static,
             "success_obj_1": success_1,
             "success_obj_2": success_2,
-            "success": success
+            "success": success,
+            "robot_force": robot_force,
+            "robot_cumulative_force": self.robot_cumulative_force,
         }
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
@@ -499,6 +528,15 @@ class PickYCBSequentialEnv(BaseEnv):
         reward_success = torch.full_like(reward, 28.0)
         reward = update_max(reward, info["success"], reward_success)
 
+        # colliisions penalty
+        step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
+                                                                min=self.robot_force_penalty_min) - self.robot_force_penalty_min)))
+        reward += step_no_col_rew
+
+        # cumulative collision penalty
+        cum_col_under_thresh_rew = (info["robot_cumulative_force"] < self.robot_cumulative_force_limit).float()
+        reward += cum_col_under_thresh_rew
+
         return reward
 
 
@@ -506,4 +544,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 28.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 30.0
