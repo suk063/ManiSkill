@@ -414,10 +414,10 @@ class PickYCBSequentialEnv(BaseEnv):
         # 6. Place inside basket (ungrasp + static)
         ungrasp_reward_1 = self.agent.get_gripper_width()
         ungrasp_reward_1[~is_grasped_1] = 1.0
-        v1 = torch.linalg.norm(self.pick_obj_1.linear_velocity, dim=1)
-        av1 = torch.linalg.norm(self.pick_obj_1.angular_velocity, dim=1)
-        static_reward_1 = 1.0 - torch.tanh(v1 * 5.0 + av1)
-        cand = 9.0 + 0.5 * (ungrasp_reward_1 + static_reward_1)
+        # v1 = torch.linalg.norm(self.pick_obj_1.linear_velocity, dim=1)
+        # av1 = torch.linalg.norm(self.pick_obj_1.angular_velocity, dim=1)
+        # static_reward_1 = 1.0 - torch.tanh(v1 * 5.0 + av1)
+        cand = 9.0 + ungrasp_reward_1
         reward = update_max(reward, info["is_placed_in_basket_obj_1"], cand)
 
         # =========================
@@ -462,11 +462,11 @@ class PickYCBSequentialEnv(BaseEnv):
             # 6. Place inside basket for O2 (ungrasp + static)
             ungrasp_reward_2 = self.agent.get_gripper_width()
             ungrasp_reward_2[~info["is_grasped_obj_2"]] = 1.0
-            v2 = torch.linalg.norm(self.pick_obj_2.linear_velocity, dim=1)
-            av2 = torch.linalg.norm(self.pick_obj_2.angular_velocity, dim=1)
-            static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
+            # v2 = torch.linalg.norm(self.pick_obj_2.linear_velocity, dim=1)
+            # av2 = torch.linalg.norm(self.pick_obj_2.angular_velocity, dim=1)
+            # static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
             mask_p2 = mask_prog1 & info["is_placed_in_basket_obj_2"]
-            cand = 19.0 + 0.5 * (ungrasp_reward_2 + static_reward_2)
+            cand = 19.0 + ungrasp_reward_2
             reward = update_max(reward, mask_p2, cand)
 
         # =========================
@@ -484,8 +484,8 @@ class PickYCBSequentialEnv(BaseEnv):
             & info["is_static_obj_2"]
             & (~info["is_grasped_obj_2"])
         )
-        final_state_reward = 0.5 * (robot_static_reward + reach_basket_top_reward)
-        cand = 21.0 + final_state_reward
+        final_state_reward = robot_static_reward + reach_basket_top_reward
+        cand = 20.0 + final_state_reward
         reward = update_max(reward, final_state, cand)
 
         # =========================
