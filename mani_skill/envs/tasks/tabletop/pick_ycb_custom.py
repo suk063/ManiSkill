@@ -149,14 +149,14 @@ class PickYCBCustomEnv(BaseEnv):
 
         clutter_poses = [
             sapien.Pose(p=[-0.15, -0.4, 0.05]),
-            sapien.Pose(p=[0.0, -0.45, 0.1081]),
+            sapien.Pose(p=[0.0, -0.45, 0.1085]),
             sapien.Pose(p=[-0.21, 0.55, 0.0888]),
             sapien.Pose(p=[-0.12, 0.65, 0.1945 / 2.0]),
             sapien.Pose(p=[-0.23, -0.6, 0.013]),
             sapien.Pose(p=[-0.33, -0.65, 0.028]),
             sapien.Pose(p=[-0.27, 0.65, 0.04]),
-            sapien.Pose(p=[0.1, -0.25, 0.032]), # Need to change
-            sapien.Pose(p=[-0.29, 0.25, 0.015]), # Need to change
+            sapien.Pose(p=[0.1, -0.25, 0.0296]),
+            sapien.Pose(p=[-0.29, 0.25, 0.015]),
             sapien.Pose(p=[0.08, 0.4, 0.019]),
         ]
 
@@ -353,7 +353,7 @@ class PickYCBCustomEnv(BaseEnv):
         }
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
-        # reaching reward
+        # reaching reward [0,2]
         tcp_pose = self.agent.tcp.pose.p
         obj_pos = self.pick_obj.pose.p
         obj_to_tcp_dist = torch.linalg.norm(tcp_pose - obj_pos, axis=1)

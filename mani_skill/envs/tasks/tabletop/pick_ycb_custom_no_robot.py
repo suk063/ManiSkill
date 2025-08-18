@@ -103,9 +103,8 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
         self.clutter_objects = []
         clutter_model_ids = [
             "002_master_chef_can", "003_cracker_box", "004_sugar_box",
-            "006_mustard_bottle", "007_tuna_fish_can", "024_bowl",
-            "021_bleach_cleanser", "025_mug",
-            "037_scissors", "040_large_marker", "051_large_clamp"
+            "006_mustard_bottle", "007_tuna_fish_can", "024_bowl", "025_mug",
+            "015_peach", "008_pudding_box", "051_large_clamp"
         ]
 
         clutter_poses = [
@@ -115,10 +114,9 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
             sapien.Pose(p=[-0.12, 0.65, 0.1945 / 2.0]),
             sapien.Pose(p=[-0.23, -0.6, 0.013]),
             sapien.Pose(p=[-0.33, -0.65, 0.028]),
-            sapien.Pose(p=[-0.31, 0.35, 0.1235]),
             sapien.Pose(p=[-0.27, 0.65, 0.04]),
-            sapien.Pose(p=[0.1, -0.25, 0.008]),
-            sapien.Pose(p=[-0.29, 0.25, 0.01]),
+            sapien.Pose(p=[0.1, -0.25, 0.032]), # Need to change
+            sapien.Pose(p=[-0.29, 0.25, 0.015]), # Need to change
             sapien.Pose(p=[0.08, 0.4, 0.019]),
         ]
 
