@@ -18,7 +18,7 @@ from mani_skill.utils.structs import Actor, GPUMemoryConfig, SimConfig
 
 @register_env("PickYCBCustomNoRobot-v1", max_episode_steps=50)
 class PickYCBCustomNoRobotEnv(BaseEnv):
-    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "024_bowl", "013_apple", "011_banana"]
+    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "010_potted_meat_can", "013_apple", "011_banana"]
     obj_half_size = 0.025
     basket_half_size = 0.012
     
@@ -36,11 +36,10 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
         self.init_obj_orientations = {}
         self.ycb_half_heights_m = {
             "005_tomato_soup_can": 0.101 / 2.0,
-            "006_mustard_bottle":  0.175 / 2.0,
+            "010_potted_meat_can":  0.0423,
             "009_gelatin_box":     0.028 / 2.0,
             "013_apple":           0.07 / 2.0,
             "011_banana":          0.036 / 2.0,
-            "024_bowl":            0.053 / 2.0,
         }
         self.spawn_z_clearance = 0.001
         super().__init__(*args, robot_uids=[], **kwargs)
@@ -100,6 +99,38 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
 
         self.pick_obj = Actor.merge(pick_objs, name="pick_obj")
 
+        # These are for clutter environment where all the objects will appear in all parallel environment
+        self.clutter_objects = []
+        clutter_model_ids = [
+            "002_master_chef_can", "003_cracker_box", "004_sugar_box",
+            "006_mustard_bottle", "007_tuna_fish_can", "024_bowl",
+            "021_bleach_cleanser", "025_mug",
+            "037_scissors", "040_large_marker", "051_large_clamp"
+        ]
+
+        clutter_poses = [
+            sapien.Pose(p=[-0.15, -0.4, 0.05]),
+            sapien.Pose(p=[0.0, -0.45, 0.1081]),
+            sapien.Pose(p=[-0.21, 0.55, 0.0888]),
+            sapien.Pose(p=[-0.12, 0.65, 0.1945 / 2.0]),
+            sapien.Pose(p=[-0.23, -0.6, 0.013]),
+            sapien.Pose(p=[-0.33, -0.65, 0.028]),
+            sapien.Pose(p=[-0.31, 0.35, 0.1235]),
+            sapien.Pose(p=[-0.27, 0.65, 0.04]),
+            sapien.Pose(p=[0.1, -0.25, 0.008]),
+            sapien.Pose(p=[-0.29, 0.25, 0.01]),
+            sapien.Pose(p=[0.08, 0.4, 0.019]),
+        ]
+
+        for i, model_id in enumerate(clutter_model_ids):
+            builder = actors.get_actor_builder(self.scene, id=f"ycb:{model_id}")
+            
+            # Set the fixed initial pose for this clutter object
+            builder.initial_pose = clutter_poses[i]
+
+            clutter_obj = builder.build(name=f"clutter_{model_id}_{i}")
+            self.clutter_objects.append(clutter_obj)
+
     def _initialize_ycb_objects(self, env_idx: torch.Tensor):
         b = len(env_idx)
 
@@ -136,7 +167,32 @@ class PickYCBCustomNoRobotEnv(BaseEnv):
             obj_positions = positions[:, obj_idx, :]
             if obj_idx not in self.init_obj_orientations:
                 self.init_obj_orientations[obj_idx] = obj.pose.q
-            obj.set_pose(Pose.create_from_pq(obj_positions, self.init_obj_orientations[obj_idx]))
+                
+            obj_orientations = self.init_obj_orientations[obj_idx]
+            if model_id == "011_banana":
+                angle_rad = np.pi / 4.0
+                apply_rotation = True
+            elif model_id == "009_gelatin_box":
+                angle_rad = np.pi / 2.0
+                apply_rotation = True
+
+            if apply_rotation:
+                # Define the rotation quaternion around the Z-axis
+                rot_w = np.cos(angle_rad / 2.0)
+                rot_z = np.sin(angle_rad / 2.0)
+                q_rot = torch.tensor([rot_w, 0, 0, rot_z], device=self.device).unsqueeze(0)
+
+                q_orig = obj_orientations
+                w1, x1, y1, z1 = q_rot[:, 0], q_rot[:, 1], q_rot[:, 2], q_rot[:, 3]
+                w2, x2, y2, z2 = q_orig[:, 0], q_orig[:, 1], q_orig[:, 2], q_orig[:, 3]
+                
+                w_new = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+                x_new = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+                y_new = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+                z_new = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+                
+                obj_orientations = torch.stack([w_new, x_new, y_new, z_new], dim=-1)
+            obj.set_pose(Pose.create_from_pq(obj_positions, obj_orientations))
 
     def _generate_circular_positions_vectorized(self, center_x, center_y, center_z, radius, starting_angle, ordering_idx):
         b = len(radius)
