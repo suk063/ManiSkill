@@ -294,13 +294,15 @@ class PickYCBSequentialEnv(BaseEnv):
         if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
             self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         
+        z_margin = 0.01
+
         pos_obj_1 = self.pick_obj_1.pose.p
         pos_obj_2 = self.pick_obj_2.pose.p
         pos_basket_bottom = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         
         # XY-plane check
-        xy_flag_1 = torch.linalg.norm(pos_obj_1[..., :2] - pos_basket_bottom[..., :2], axis=1) <= 0.14  # 0.24 / 2.0
-        xy_flag_2 = torch.linalg.norm(pos_obj_2[..., :2] - pos_basket_bottom[..., :2], axis=1) <= 0.14  # 0.24 / 2.0
+        xy_flag_1 = torch.all(torch.abs(pos_obj_1[..., :2] - pos_basket_bottom[..., :2]) <= 0.12, axis=1)  # 24cm x 24cm square check
+        xy_flag_2 = torch.all(torch.abs(pos_obj_2[..., :2] - pos_basket_bottom[..., :2]) <= 0.12, axis=1)  # 24cm x 24cm square check
         
         # Z-axis checks based on clearer variable names
         obj_bottom_z_1 = pos_obj_1[..., 2] - self.env_target_obj_half_height_1
@@ -311,12 +313,12 @@ class PickYCBSequentialEnv(BaseEnv):
         basket_top_z = pos_basket_bottom[..., 2] + 2 * self.basket_half_size
         
         # entering_basket_z_flag: True if the object's bottom is below the basket's top edge.
-        entering_basket_z_flag_1 = obj_bottom_z_1 < basket_top_z
-        entering_basket_z_flag_2 = obj_bottom_z_2 < basket_top_z
+        entering_basket_z_flag_1 = obj_bottom_z_1 < (basket_top_z - z_margin)
+        entering_basket_z_flag_2 = obj_bottom_z_2 < (basket_top_z - z_margin)
         
         # placed_in_basket_z_flag: True if the object is entirely inside the basket (vertically).
-        placed_in_basket_z_flag_1 = (obj_bottom_z_1 > basket_bottom_z) & (obj_top_z_1 < basket_top_z)
-        placed_in_basket_z_flag_2 = (obj_bottom_z_2 > basket_bottom_z) & (obj_top_z_2 < basket_top_z)
+        placed_in_basket_z_flag_1 = (obj_bottom_z_1 > basket_bottom_z + z_margin) & (obj_top_z_1 < basket_top_z - z_margin)
+        placed_in_basket_z_flag_2 = (obj_bottom_z_2 > basket_bottom_z + z_margin) & (obj_top_z_2 < basket_top_z - z_margin)
         
         is_entering_basket_obj_1 = torch.logical_and(xy_flag_1, entering_basket_z_flag_1)
         is_entering_basket_obj_2 = torch.logical_and(xy_flag_2, entering_basket_z_flag_2)
