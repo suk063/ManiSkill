@@ -10,15 +10,16 @@ COMMON_ARGS=(
   --env_id=PickYCBSequential-v1 # PickYCBCustom-v1
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
-  --num_envs=50
+  --num_envs=32
   --num_eval_envs=20
   --eval_freq=20
   --total_timesteps=100_000_000
-  --num_steps=300
-  --num_eval_steps=300
-  --gamma=0.99
-  --gae_lambda=0.95
-  --update_epochs=8
+  --num_steps=500
+  --num_eval_steps=500
+  --gamma=0.9
+  --gae_lambda=0.9
+  --update_epochs=4
+  --learning_rate=1e-4
   --capture-video
   --track
   --wandb_project_name "PPO-RL-Map"
