@@ -140,8 +140,8 @@ class PickYCBSequentialEnv(BaseEnv):
         self.env_target_obj_half_height_1 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self.env_target_obj_half_height_2 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
 
-        model_id_1 = "005_tomato_soup_can"
-        model_id_2 = "009_gelatin_box"
+        model_id_1 = "013_apple"
+        model_id_2 = "011_banana"
 
         obj_idx_1 = self.model_ids.index(model_id_1)
         obj_idx_2 = self.model_ids.index(model_id_2)
@@ -301,8 +301,8 @@ class PickYCBSequentialEnv(BaseEnv):
         pos_basket_bottom = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         
         # XY-plane check
-        xy_flag_1 = torch.all(torch.abs(pos_obj_1[..., :2] - pos_basket_bottom[..., :2]) <= 0.12, axis=1)  # 24cm x 24cm square check
-        xy_flag_2 = torch.all(torch.abs(pos_obj_2[..., :2] - pos_basket_bottom[..., :2]) <= 0.12, axis=1)  # 24cm x 24cm square check
+        xy_flag_1 = torch.all(torch.abs(pos_obj_1[..., :2] - pos_basket_bottom[..., :2]) <= 0.12, dim=1)  # 24cm x 24cm square check
+        xy_flag_2 = torch.all(torch.abs(pos_obj_2[..., :2] - pos_basket_bottom[..., :2]) <= 0.12, dim=1)  # 24cm x 24cm square check
         
         # Z-axis checks based on clearer variable names
         obj_bottom_z_1 = pos_obj_1[..., 2] - self.env_target_obj_half_height_1
@@ -332,12 +332,14 @@ class PickYCBSequentialEnv(BaseEnv):
         
         success_1 = is_placed_in_basket_obj_1 & is_static_obj_1 & (~is_grasped_obj_1)
         prev_stage1_done = self.stage1_done.clone()
-        success_2 = prev_stage1_done & is_placed_in_basket_obj_2 & is_static_obj_2 & (~is_grasped_obj_2) & is_robot_static
+        current_stage1_done = prev_stage1_done | success_1
+        success_2 = current_stage1_done & is_placed_in_basket_obj_2 & is_static_obj_2 & (~is_grasped_obj_2) & is_robot_static
         
-        self.stage1_done = prev_stage1_done | success_1
+        self.stage1_done = current_stage1_done
         success = success_2
 
         return {
+            "prev_stage1_done": prev_stage1_done,
             "env_target_obj_idx_1": self.env_target_obj_idx_1,
             "env_target_obj_idx_2": self.env_target_obj_idx_2,
             "is_grasped_obj_1": is_grasped_obj_1,
@@ -355,94 +357,142 @@ class PickYCBSequentialEnv(BaseEnv):
         }
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
-        ## Common tensors
+        # --- Common tensors ---
         tcp_pose = self.agent.tcp.pose.p
-        basket_top_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device) # [-0.1745, 0, -0.1135] 
+        basket_top_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         basket_top_pos[:, 2] = basket_top_pos[:, 2] + 2 * self.basket_half_size
-        basket_inside_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device) # [-0.1745, 0, -0.1135]   
-        basket_inside_pos[:, 2] = basket_inside_pos[:, 2] + 0.03 # add 3cm to the basket bottom z
+
+        basket_inside_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
+        basket_inside_pos[:, 2] = basket_inside_pos[:, 2] + 0.03  # add 3cm to the basket bottom z
+
+        basket_top_target = basket_top_pos.clone()
+        basket_top_target[:, 2] += 0.03  # slightly above the rim to encourage clearing the edge
+
+        prev_stage1_done = info["prev_stage1_done"]
  
-        if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
-            prev_stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-            self.stage1_done = prev_stage1_done.clone()
-        else:
-            prev_stage1_done = self.stage1_done.clone()
- 
-        ### Object 1 Pick Place Reward ###
-        # reaching reward
-        obj_pos = self.pick_obj_1.pose.p
-        obj_to_tcp_dist = torch.linalg.norm(tcp_pose - obj_pos, axis=1)
-        reward = 2 * (1 - torch.tanh(5 * obj_to_tcp_dist))
+        # Helper to apply monotonic update on a boolean mask
+        def update_max(reward_vec: torch.Tensor, mask: torch.Tensor, candidate: torch.Tensor):
+            """
+            reward <- max(reward, candidate) on masked elements; unchanged elsewhere.
+            """
+            if isinstance(candidate, float):
+                candidate = torch.full_like(reward_vec, candidate)
+            return torch.where(mask, torch.maximum(reward_vec, candidate), reward_vec)
+
+        # =========================
+        # Object 1: Reach -> Grasp -> Lift -> Approach -> Enter -> Place
+        # =========================
+        obj_pos_1 = self.pick_obj_1.pose.p
+        obj_to_tcp_dist_1 = torch.linalg.norm(tcp_pose - obj_pos_1, dim=1)
+
+        # 1. Reach reward (dense)
+        reward = 2.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_1))
+
+        # 2. Grasp reward
+        is_grasped_1 = info["is_grasped_obj_1"]
+        cand = 4.0
+        reward = update_max(reward, is_grasped_1, cand)
         
-        # NOTE: Need to tune this to get a z value slightly above the basket top
-        obj_to_basket_top_dist = torch.linalg.norm(basket_top_pos + 0.03 - obj_pos, axis=1)
-        reach_basket_top_reward = 1 - torch.tanh(5.0 * obj_to_basket_top_dist)
-        reward[info["is_grasped_obj_1"]] = (4 + reach_basket_top_reward)[info["is_grasped_obj_1"]]
+        # 3. Lift reward
+        obj_bottom_z_1 = obj_pos_1[..., 2] - self.env_target_obj_half_height_1
+        lifted_1 = is_grasped_1 & (obj_bottom_z_1 >= 0.01)
+        cand = 5.0
+        reward = update_max(reward, lifted_1, cand)
 
-        # NOTE: Need to tune this to get a z value inside the basket
-        obj_to_basket_inside_dist = torch.linalg.norm(basket_inside_pos - obj_pos, axis=1)
-        reach_inside_basket_reward = 1 - torch.tanh(5.0 * obj_to_basket_inside_dist)
-        reward[info["is_entering_basket_obj_1"]] = (6 + reach_inside_basket_reward)[info["is_entering_basket_obj_1"]]
+        # 4. Approach basket top (while grasped)
+        obj_to_basket_top_dist_1 = torch.linalg.norm(basket_top_target - obj_pos_1, dim=1)
+        reach_basket_top_reward_1 = 1.0 - torch.tanh(5.0 * obj_to_basket_top_dist_1)
+        cand = 5.0 + 3.0 * reach_basket_top_reward_1
+        reward = update_max(reward, lifted_1, cand)
 
-        # ungrasp and static reward
-        is_obj_grasped = info["is_grasped_obj_1"]
-        ungrasp_reward = self.agent.get_gripper_width()
-        ungrasp_reward[
-            ~is_obj_grasped
-        ] = 1.0
-        v = torch.linalg.norm(self.pick_obj_1.linear_velocity, axis=1)
-        av = torch.linalg.norm(self.pick_obj_1.angular_velocity, axis=1)
-        static_reward = 1 - torch.tanh(v * 5 + av)
-        reward[info["is_placed_in_basket_obj_1"]] = (
-            8 + (ungrasp_reward + static_reward) / 2.0
-        )[info["is_placed_in_basket_obj_1"]]
+        # 5. Enter basket
+        obj_to_basket_inside_dist_1 = torch.linalg.norm(basket_inside_pos - obj_pos_1, dim=1)
+        reach_inside_basket_reward_1 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_1)
+        cand = 8.0 + reach_inside_basket_reward_1
+        reward = update_max(reward, info["is_entering_basket_obj_1"], cand)
 
-        ### Object 2 Pick Place Reward ###
-        obj_pos = self.pick_obj_2.pose.p
-        obj_to_tcp_dist = torch.linalg.norm(tcp_pose - obj_pos, axis=1)
-        reach_obj_2_reward = 2 * (1 - torch.tanh(5 * obj_to_tcp_dist))
-        mask_prog1 = prev_stage1_done
+        # 6. Place inside basket (ungrasp + static)
+        ungrasp_reward_1 = self.agent.get_gripper_width()
+        ungrasp_reward_1[~is_grasped_1] = 1.0
+        v1 = torch.linalg.norm(self.pick_obj_1.linear_velocity, dim=1)
+        av1 = torch.linalg.norm(self.pick_obj_1.angular_velocity, dim=1)
+        static_reward_1 = 1.0 - torch.tanh(v1 * 5.0 + av1)
+        cand = 9.0 + 0.5 * (ungrasp_reward_1 + static_reward_1)
+        reward = update_max(reward, info["is_placed_in_basket_obj_1"], cand)
+
+        # =========================
+        # Object 2: Reach -> Grasp -> Lift -> Approach -> Enter -> Place (gated by obj1 progress)
+        # =========================
+        obj_pos_2 = self.pick_obj_2.pose.p
+        obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
+        reach_obj_2_reward = 2.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2))
+
+        # Gate O2 progress: either already finished stage1 or just succeeded on obj1
+        mask_prog1 = prev_stage1_done | info["success_obj_1"]
 
         if mask_prog1.any():
-            reward[mask_prog1] = (10 + reach_obj_2_reward)[mask_prog1]
+            # 1. Reach object 2 (dense)
+            cand = 10.0 + reach_obj_2_reward
+            reward = update_max(reward, mask_prog1, cand)
 
-            obj_to_basket_top_dist = torch.linalg.norm(basket_top_pos + 0.03 - obj_pos, axis=1)
-            reach_basket_top_reward = 1 - torch.tanh(5.0 * obj_to_basket_top_dist)
-            mask_g2 = mask_prog1 & info["is_grasped_obj_2"]
-            reward[mask_g2] = (12 + reach_basket_top_reward)[mask_g2]
+            # 2. Grasp reward
+            is_grasped_2 = mask_prog1 & info["is_grasped_obj_2"]
+            cand = 14.0
+            reward = update_max(reward, is_grasped_2, cand)
 
-            obj_to_basket_inside_dist = torch.linalg.norm(basket_inside_pos - obj_pos, axis=1)
-            reach_inside_basket_reward = 1 - torch.tanh(5.0 * obj_to_basket_inside_dist)
+            # 3. Lift reward
+            obj_bottom_z_2 = obj_pos_2[..., 2] - self.env_target_obj_half_height_2
+            lifted_2 = is_grasped_2 & (obj_bottom_z_2 >= 0.01)
+            cand = 15.0
+            reward = update_max(reward, lifted_2, cand)
+
+            # 4. Approach basket top for O2 (while grasped)
+            obj_to_basket_top_dist_2 = torch.linalg.norm(basket_top_target - obj_pos_2, dim=1)
+            reach_basket_top_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_top_dist_2)
+            cand = 15.0 + 3.0 * reach_basket_top_reward_2
+            reward = update_max(reward, lifted_2, cand)
+
+            # 5. Enter basket for O2
+            obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos - obj_pos_2, dim=1)
+            reach_inside_basket_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_2)
             mask_e2 = mask_prog1 & info["is_entering_basket_obj_2"]
-            reward[mask_e2] = (14 + reach_inside_basket_reward)[mask_e2]
+            cand = 18.0 + reach_inside_basket_reward_2
+            reward = update_max(reward, mask_e2, cand)
 
-            is_obj_grasped_2 = info["is_grasped_obj_2"]
+            # 6. Place inside basket for O2 (ungrasp + static)
             ungrasp_reward_2 = self.agent.get_gripper_width()
-            ungrasp_reward_2[~is_obj_grasped_2] = 1.0
-            v2 = torch.linalg.norm(self.pick_obj_2.linear_velocity, axis=1)
-            av2 = torch.linalg.norm(self.pick_obj_2.angular_velocity, axis=1)
-            static_reward_2 = 1 - torch.tanh(v2 * 5 + av2)
+            ungrasp_reward_2[~info["is_grasped_obj_2"]] = 1.0
+            v2 = torch.linalg.norm(self.pick_obj_2.linear_velocity, dim=1)
+            av2 = torch.linalg.norm(self.pick_obj_2.angular_velocity, dim=1)
+            static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
             mask_p2 = mask_prog1 & info["is_placed_in_basket_obj_2"]
-            reward[mask_p2] = (16 + (ungrasp_reward_2 + static_reward_2) / 2.0)[mask_p2]
+            cand = 19.0 + 0.5 * (ungrasp_reward_2 + static_reward_2)
+            reward = update_max(reward, mask_p2, cand)
 
-        ### Final Stage Reward ###
-        # go up and stay static reward
-        robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), axis=1)
-        robot_static_reward = 1 - torch.tanh(5.0 * robot_qvel)
-        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - basket_top_pos, axis=1)
-        reach_basket_top_reward = 1 - torch.tanh(5.0 * tcp_to_basket_top_dist)
-        
+        # =========================
+        # Final stage: robot goes up and stays static
+        # =========================
+        robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), dim=1)
+        robot_static_reward = 1.0 - torch.tanh(5.0 * robot_qvel)
+
+        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - basket_top_pos, dim=1)
+        reach_basket_top_reward = 1.0 - torch.tanh(5.0 * tcp_to_basket_top_dist)
+
         final_state = (
-            prev_stage1_done
-            & info["is_placed_in_basket_obj_1"] & (~info["is_grasped_obj_1"])
-            & info["is_placed_in_basket_obj_2"] & (~info["is_grasped_obj_2"])
+            (prev_stage1_done | info["success_obj_1"])
+            & info["is_placed_in_basket_obj_2"]
+            & info["is_static_obj_2"]
+            & (~info["is_grasped_obj_2"])
         )
-        final_state_reward = (robot_static_reward + reach_basket_top_reward) / 2.0
-        reward[final_state] = (18 + final_state_reward)[final_state]
+        final_state_reward = 0.5 * (robot_static_reward + reach_basket_top_reward)
+        cand = 21.0 + final_state_reward
+        reward = update_max(reward, final_state, cand)
 
-        # success reward
-        reward[info["success"]] = 25
-        # self.stage1_done = prev_stage1_done | info["success_obj_1"]
+        # =========================
+        # Success bonus
+        # =========================
+        reward_success = torch.full_like(reward, 25.0)
+        reward = update_max(reward, info["success"], reward_success)
 
         return reward
 
