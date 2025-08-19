@@ -47,29 +47,68 @@ class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
         self.cam_mount = self.scene.create_actor_builder().build_kinematic("camera_mount")
 
     def evaluate(self):
-        pos_obj = self.pick_obj.pose.p
+        if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
+            self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        
+        z_margin = 0.01
+
+        pos_obj_1 = self.pick_obj_1.pose.p
+        pos_obj_2 = self.pick_obj_2.pose.p
         pos_basket_bottom = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         
-        xy_flag = torch.linalg.norm(pos_obj[..., :2] - pos_basket_bottom[..., :2], axis=1) <= 0.12
+        # XY-plane check
+        xy_flag_1 = torch.all(torch.abs(pos_obj_1[..., :2] - pos_basket_bottom[..., :2]) <= 0.12, dim=1)
+        xy_flag_2 = torch.all(torch.abs(pos_obj_2[..., :2] - pos_basket_bottom[..., :2]) <= 0.12, dim=1)
         
-        obj_bottom_z = pos_obj[..., 2] - self.env_target_obj_half_height
-        obj_top_z = pos_obj[..., 2] + self.env_target_obj_half_height
+        # Z-axis checks
+        obj_bottom_z_1 = pos_obj_1[..., 2] - self.env_target_obj_half_height_1
+        obj_top_z_1 = pos_obj_1[..., 2] + self.env_target_obj_half_height_1
+        obj_bottom_z_2 = pos_obj_2[..., 2] - self.env_target_obj_half_height_2
+        obj_top_z_2 = pos_obj_2[..., 2] + self.env_target_obj_half_height_2
         basket_bottom_z = pos_basket_bottom[..., 2]
         basket_top_z = pos_basket_bottom[..., 2] + 2 * self.basket_half_size
         
-        entering_basket_z_flag = obj_bottom_z < basket_top_z
-        placed_in_basket_z_flag = (obj_bottom_z > basket_bottom_z) & (obj_top_z < basket_top_z)
+        entering_basket_z_flag_1 = obj_bottom_z_1 < (basket_top_z - z_margin)
+        entering_basket_z_flag_2 = obj_bottom_z_2 < (basket_top_z - z_margin)
         
-        is_obj_entering_basket = torch.logical_and(xy_flag, entering_basket_z_flag)
-        is_obj_placed_in_basket = torch.logical_and(xy_flag, placed_in_basket_z_flag)
-        is_obj_static = self.pick_obj.is_static(lin_thresh=1e-2, ang_thresh=0.5)
-        success = is_obj_placed_in_basket & is_obj_static
+        placed_in_basket_z_flag_1 = (obj_bottom_z_1 > basket_bottom_z) & (obj_top_z_1 < basket_top_z - z_margin)
+        placed_in_basket_z_flag_2 = (obj_bottom_z_2 > basket_bottom_z) & (obj_top_z_2 < basket_top_z - z_margin)
+        
+        is_entering_basket_obj_1 = torch.logical_and(xy_flag_1, entering_basket_z_flag_1)
+        is_entering_basket_obj_2 = torch.logical_and(xy_flag_2, entering_basket_z_flag_2)
+        is_placed_in_basket_obj_1 = torch.logical_and(xy_flag_1, placed_in_basket_z_flag_1)
+        is_placed_in_basket_obj_2 = torch.logical_and(xy_flag_2, placed_in_basket_z_flag_2)
+
+        is_grasped_obj_1 = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        is_grasped_obj_2 = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        is_static_obj_1 = self.pick_obj_1.is_static(lin_thresh=1e-2, ang_thresh=0.5)
+        is_static_obj_2 = self.pick_obj_2.is_static(lin_thresh=1e-2, ang_thresh=0.5)
+        is_robot_static = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+
+        success_1 = is_placed_in_basket_obj_1 & is_static_obj_1 & (~is_grasped_obj_1)
+        prev_stage1_done = self.stage1_done.clone()
+        current_stage1_done = prev_stage1_done | success_1
+        success_2 = current_stage1_done & is_placed_in_basket_obj_2 & is_static_obj_2 & (~is_grasped_obj_2)
+        
+        self.stage1_done = current_stage1_done
+        success = success_2 & is_robot_static
 
         return {
-            "env_target_obj_idx": self.env_target_obj_idx,
-            "is_obj_entering_basket": is_obj_entering_basket,
-            "is_obj_placed_in_basket": is_obj_placed_in_basket,
-            "is_obj_static": is_obj_static,
+            "prev_stage1_done": prev_stage1_done,
+            "env_target_obj_idx_1": self.env_target_obj_idx_1,
+            "env_target_obj_idx_2": self.env_target_obj_idx_2,
+            "is_grasped_obj_1": is_grasped_obj_1,
+            "is_grasped_obj_2": is_grasped_obj_2,
+            "is_entering_basket_obj_1": is_entering_basket_obj_1,
+            "is_entering_basket_obj_2": is_entering_basket_obj_2,
+            "is_placed_in_basket_obj_1": is_placed_in_basket_obj_1,
+            "is_placed_in_basket_obj_2": is_placed_in_basket_obj_2,
+            "is_static_obj_1": is_static_obj_1,
+            "is_static_obj_2": is_static_obj_2,
+            "is_robot_static": is_robot_static,
+            "success_obj_1": success_1,
+            "success_obj_2": success_2,
             "success": success,
         }
 
@@ -79,8 +118,10 @@ class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
         )
         if "state" in self.obs_mode:
             obs.update(
-                obj_pose=self.pick_obj.pose.raw_pose,
-                obj_to_basket_pos=self.basket.pose.p - self.pick_obj.pose.p,
+                obj1_pose=self.pick_obj_1.pose.raw_pose,
+                obj2_pose=self.pick_obj_2.pose.raw_pose,
+                obj1_to_basket_pos=self.basket.pose.p - self.pick_obj_1.pose.p,
+                obj2_to_basket_pos=self.basket.pose.p - self.pick_obj_2.pose.p,
             )
         return obs
 

@@ -8,11 +8,10 @@ python sanity_check/ppo_state.py \
     --total_timesteps=100_000_000 \
     --num_steps=500 \
     --num_eval_steps=500 \
-    --gamma=0.9 \
-    --gae_lambda=0.9 \
-    --update_epochs=4 \
+    --gamma=0.99 \
+    --gae_lambda=0.95 \
+    --update_epochs=8 \
     --learning_rate=3e-4 \
     --capture-video \
     --track \
-    --wandb_project_name "PPO-RL-Map" \
-    --checkpoint_path "runs/YCB_sequential_xarm6_ppo_state/ckpt_101.pt"
+    --wandb_project_name "PPO-RL-Map"

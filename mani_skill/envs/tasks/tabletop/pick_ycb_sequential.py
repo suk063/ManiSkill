@@ -34,7 +34,7 @@ class PickYCBSequentialEnv(BaseEnv):
     sensor_cam_target_pos = [-0.1, 0, 0.1]
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
-    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "024_bowl", "013_apple", "011_banana"]
+    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "014_lemon", "013_apple", "011_banana"]
     obj_half_size = 0.025
     basket_half_size = 0.132 / 2 # 44.2964 (original_size) * 0.003 (scale) / 2.0
     basket_pos_offset = torch.tensor([0, 0, 0.1135])
@@ -51,8 +51,9 @@ class PickYCBSequentialEnv(BaseEnv):
             "005_tomato_soup_can": 0.101 / 2.0,
             "006_mustard_bottle":  0.175 / 2.0,
             "009_gelatin_box":     0.028 / 2.0,
-            "013_apple":           0.07 / 2.0,
             "011_banana":          0.036 / 2.0,
+            "013_apple":           0.07 / 2.0,
+            "014_lemon":           0.05 / 2.0,
             "024_bowl":            0.053 / 2.0,
         }
 
@@ -160,7 +161,7 @@ class PickYCBSequentialEnv(BaseEnv):
         self.env_target_obj_half_height_2 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
 
         model_id_1 = "013_apple"
-        model_id_2 = "011_banana"
+        model_id_2 = "014_lemon"
 
         obj_idx_1 = self.model_ids.index(model_id_1)
         obj_idx_2 = self.model_ids.index(model_id_2)
