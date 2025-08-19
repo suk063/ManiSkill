@@ -38,6 +38,6 @@ run_cfg() {
 run_cfg cnn-map-local-fusion \
   --use_map \
   --use_local_fusion \
-  --vision_encoder=plain_cnn \
+  --vision_encoder=dino \
   --map_start_iteration=100000000 \
   # --checkpoint=pretrained/ckpt_latest.pt \
