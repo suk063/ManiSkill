@@ -35,7 +35,7 @@ run_cfg() {
     "$@"
 }
 
-run_cfg cnn-map-local-fusion-base-and-hand-cam-priviledged-state  \
+run_cfg cnn-map-local-fusion-base-and-hand-cam  \
   --use_map \
   --use_local_fusion \
   --vision_encoder=plain_cnn \
