@@ -13,7 +13,7 @@ from torchvision import transforms
 
 transform = transforms.Compose(
     [
-        transforms.Resize(size=84, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
+        transforms.Resize(size=224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
         transforms.Normalize(
             mean=(0.48145466, 0.4578275, 0.40821073),
             std=(0.26862954, 0.26130258, 0.27577711),
@@ -44,10 +44,10 @@ class FeatureExtractor(nn.Module):
         
         if vision_encoder == 'dino':
             self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64)
-            n_flatten = 36 * self.vision_encoder.embed_dim # 36 = 6 * 6
+            n_flatten = 16 * 16 * self.vision_encoder.embed_dim
         elif vision_encoder == 'plain_cnn':
             self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=64)
-            n_flatten = 36 * self.vision_encoder.embed_dim # 36 = 6 * 6
+            n_flatten = 14 * 14 * self.vision_encoder.embed_dim
         else:
             raise ValueError(f"Vision encoder {vision_encoder} not supported")
         
@@ -114,7 +114,7 @@ class FeatureExtractor(nn.Module):
         # pose = observations["sensor_param"]["base_camera"]["extrinsic_cv"]
         pose = observations["sensor_param"][camera_uid]["extrinsic_cv"]
 
-        Hf = Wf = 6
+        Hf = Wf = image_fmap.size(2)
         depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
         
         fx = fy = observations["sensor_param"][camera_uid]["intrinsic_cv"][0][0][0]
