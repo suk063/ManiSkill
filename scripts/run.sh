@@ -35,9 +35,9 @@ run_cfg() {
     "$@"
 }
 
-run_cfg dino-map-local-fusion \
+run_cfg cnn-map-local-fusion \
   --use_map \
   --use_local_fusion \
-  --vision_encoder=dino \
+  --vision_encoder=plain_cnn \
   --map_start_iteration=10000000 \
   # --checkpoint=pretrained/ckpt_latest.pt \
