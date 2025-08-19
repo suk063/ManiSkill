@@ -97,7 +97,7 @@ class Args:
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
-    camera_uids: List[str] = field(default_factory=lambda: ["base_camera"])
+    camera_uids: List[str] = field(default_factory=lambda: ["base_camera", "hand_camera"])
     """the camera to use for the environment"""
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""

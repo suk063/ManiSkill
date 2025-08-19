@@ -340,10 +340,10 @@ class PickYCBSequentialEnv(BaseEnv):
         if "state" in self.obs_mode:
             obs.update(
                 # obj_pose=self.pick_obj.pose.raw_pose,
-                # tcp_to_obj1_pos=self.pick_obj_1.pose.p - self.agent.tcp.pose.p,
-                # tcp_to_obj2_pos=self.pick_obj_2.pose.p - self.agent.tcp.pose.p,
-                # obj1_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_1.pose.p,
-                # obj2_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_2.pose.p,
+                tcp_to_obj1_pos=self.pick_obj_1.pose.p - self.agent.tcp.pose.p,
+                tcp_to_obj2_pos=self.pick_obj_2.pose.p - self.agent.tcp.pose.p,
+                obj1_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_1.pose.p,
+                obj2_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_2.pose.p,
             )
         return obs
 
