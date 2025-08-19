@@ -296,7 +296,10 @@ class PickYCBCustomEnv(BaseEnv):
         with torch.device(self.device):
             self.table_scene.initialize(env_idx)
             self._initialize_ycb_objects(env_idx)
-    
+            # (woojeh) NOTE: We don't use this yet
+            if not hasattr(self, 'robot_rest_qpos'):
+                self.robot_rest_qpos = self.agent.robot.get_qpos().clone()
+            
     def _get_obs_extra(self, info: Dict):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
         obs = dict(
@@ -367,13 +370,14 @@ class PickYCBCustomEnv(BaseEnv):
         
         # NOTE: Need to tune this to get a z value slightly above the basket top
         basket_top_pos[:, 2] = basket_top_pos[:, 2] + 2 * self.basket_half_size
-        obj_to_basket_top_dist = torch.linalg.norm(basket_top_pos + 0.03 - obj_pos, axis=1)
+        basket_top_pos[:, 2] += 0.05 # (woojeh) NOTE: Only apply to z value 
+        obj_to_basket_top_dist = torch.linalg.norm(basket_top_pos - obj_pos, axis=1)
         reach_basket_top_reward = 1 - torch.tanh(5.0 * obj_to_basket_top_dist)
         reward[info["is_obj_grasped"]] = (4 + reach_basket_top_reward)[info["is_obj_grasped"]]
 
         # NOTE: Need to tune this to get a z value inside the basket
         basket_inside_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device) # [-0.1745, 0, -0.1135]   
-        basket_inside_pos[:, 2] = basket_inside_pos[:, 2] + 0.03 # add 3cm to the basket bottom z
+        basket_inside_pos[:, 2] += (self.env_target_obj_half_height + 0.01) # (woojeh) NOTE: Apply dynamically depending on the object
         obj_to_basket_inside_dist = torch.linalg.norm(basket_inside_pos - obj_pos, axis=1)
         reach_inside_basket_reward = 1 - torch.tanh(5.0 * obj_to_basket_inside_dist)
         reward[info["is_obj_entering_basket"]] = (6 + reach_inside_basket_reward)[info["is_obj_entering_basket"]]
@@ -383,26 +387,31 @@ class PickYCBCustomEnv(BaseEnv):
         ungrasp_reward = self.agent.get_gripper_width()
         ungrasp_reward[
             ~is_obj_grasped
-        ] = 1.0
+        ] = 5.0 # (woojeh) NOTE: Give bigger reward for ungrasp (original: 1)
         v = torch.linalg.norm(self.pick_obj.linear_velocity, axis=1)
         av = torch.linalg.norm(self.pick_obj.angular_velocity, axis=1)
-        static_reward = 1 - torch.tanh(v * 5 + av)
+        static_reward = 1 - torch.tanh(v * 10 + av) 
         reward[info["is_obj_placed_in_basket"]] = (
-            8 + (ungrasp_reward + static_reward) / 2.0
+            10 + (ungrasp_reward + static_reward) / 2.0
         )[info["is_obj_placed_in_basket"]]
 
         # go up and stay static reward
         robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), axis=1)
-        robot_static_reward = 1 - torch.tanh(5.0 * robot_qvel)
-        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - (self.basket.pose.p + self.basket_pos_offset.to(self.device)), axis=1)
+        static_reward = 1 - torch.tanh(5.0 * robot_qvel)
+        target = (self.basket.pose.p + self.basket_pos_offset.to(self.device)).clone()
+        target[:, 2] += 0.1 # (woojeh) NOTE: Lift above 10 cm
+        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - target, axis=1)
         reach_basket_top_reward = 1 - torch.tanh(5.0 * tcp_to_basket_top_dist)
+        robot_static_reward = self.agent.is_static(
+            0.2
+        )
         
         final_state = info["is_obj_placed_in_basket"] & ~info["is_obj_grasped"]
-        final_state_reward = (robot_static_reward + reach_basket_top_reward) / 2.0
-        reward[final_state] = (10 + final_state_reward)[final_state]
+        final_state_reward = (static_reward + robot_static_reward + reach_basket_top_reward) / 3.0
+        reward[final_state] = (12 + final_state_reward)[final_state]
 
         # success reward
-        reward[info["success"]] = 15
+        reward[info["success"]] = 16
         return reward
 
 
