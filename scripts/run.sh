@@ -35,9 +35,10 @@ run_cfg() {
     "$@"
 }
 
-run_cfg dino-map-local-fusion \
+run_cfg dino-map-local-fusion-base-cam \
   --use_map \
   --use_local_fusion \
   --vision_encoder=dino \
   --map_start_iteration=100000000 \
+  --camera_uids=base_camera \
   # --checkpoint=pretrained/ckpt_latest.pt \
