@@ -1,0 +1,144 @@
+import torch
+import torch.nn.functional as F
+
+from mapping.mapping_lib.utils import get_visual_features, get_3d_coordinates
+from torchvision import transforms
+transform = transforms.Compose(
+    [
+        transforms.Normalize(
+            mean=(0.48145466, 0.4578275, 0.40821073),
+            std=(0.26862954, 0.26130258, 0.27577711),
+        ),
+    ]
+) 
+
+def update_map_online(obs, sensor_param, grids, clip_model, decoder, map_optimizer, args, update_mask=None):
+    """
+    Update voxel grids online using a single optimizer for all maps and fully batched processing.
+    """
+    if not args.use_online_mapping or not grids:
+        return None
+
+    num_envs = len(grids)
+    robot_ids_tensor = torch.tensor(args.robot_segmentation_id, device=args.device)
+
+    # --- 1. Data Collection and Filtering ---
+    all_coords_valid = []
+    all_feats_valid = []
+    valid_env_indices = []
+
+    if update_mask is None:
+        update_mask = torch.ones(num_envs, dtype=torch.bool, device=args.device)
+
+    # Iterate over environments that need updates
+    for i in torch.where(update_mask)[0].tolist():
+        
+        env_coords_valid = []
+        env_feats_valid = []
+
+        # Process each camera view for the current environment
+        for cam_idx, cam_uid in enumerate(args.camera_uids):
+            # Prepare inputs for a single environment and camera
+            # Assuming RGB/Depth/Seg observations are concatenated along the channel axis
+            num_cams = len(args.camera_uids)
+            
+            # Extract data for the current camera
+            rgb_channels = obs["rgb"][i].shape[-1]
+            rgb = obs["rgb"][i][:, :, (rgb_channels//num_cams)*cam_idx:(rgb_channels//num_cams)*(cam_idx+1)].permute(2, 0, 1)
+            
+            depth_channels = obs["depth"][i].shape[-1]
+            depth = obs["depth"][i][:, :, (depth_channels//num_cams)*cam_idx:(depth_channels//num_cams)*(cam_idx+1)]
+
+            seg_channels = obs["segmentation"][i].shape[-1]
+            segmentation = obs["segmentation"][i][:, :, (seg_channels//num_cams)*cam_idx:(seg_channels//num_cams)*(cam_idx+1)]
+
+            # Camera intrinsics and extrinsics from sensor_param
+            cam_params = sensor_param[cam_uid]
+            extrinsic_cv = cam_params['extrinsic_cv'][i]
+            intrinsic_cv = cam_params['intrinsic_cv'][i]
+            
+            fx, fy = intrinsic_cv[0, 0], intrinsic_cv[1, 1]
+            cx, cy = intrinsic_cv[0, 2], intrinsic_cv[1, 2]
+            extrinsic_t = extrinsic_cv.unsqueeze(0).unsqueeze(0)
+
+            # Preprocess image and extract features
+            img_tensor = transform(rgb / 255.0).unsqueeze(0).to(args.device)
+            with torch.no_grad():
+                vis_feat = get_visual_features(clip_model, img_tensor)
+            
+            B, C_, Hf, Wf = vis_feat.shape
+
+            # Get 3D coordinates from depth
+            depth_t = depth.permute(2, 0, 1).unsqueeze(0)
+            depth_t = F.interpolate(depth_t / 1000.0, (Hf, Wf), mode="nearest-exact")
+            coords_world, _ = get_3d_coordinates(depth_t, extrinsic_t, fx=fx, fy=fy, cx=cx, cy=cy)
+
+            feats_flat = vis_feat.permute(0, 2, 3, 1).reshape(-1, C_)
+            coords_flat = coords_world.permute(0, 2, 3, 1).reshape(-1, 3)
+
+            # Filter out robot pixels
+            segmentation_t = segmentation.permute(2, 0, 1).unsqueeze(0).float()
+            segmentation_t = F.interpolate(segmentation_t, (Hf, Wf), mode="nearest-exact").long().squeeze()
+            is_robot = torch.isin(segmentation_t, robot_ids_tensor)
+            non_robot_mask = ~is_robot.reshape(-1)
+            
+            if non_robot_mask.sum() == 0:
+                continue
+
+            coords_non_robot = coords_flat[non_robot_mask]
+            feats_non_robot = feats_flat[non_robot_mask]
+
+            # Filter out-of-bounds coordinates
+            scene_min, scene_max = grids[i].get_scene_bounds()
+            in_x = (coords_non_robot[:, 0] >= scene_min[0]) & (coords_non_robot[:, 0] <= scene_max[0])
+            in_y = (coords_non_robot[:, 1] >= scene_min[1]) & (coords_non_robot[:, 1] <= scene_max[1])
+            in_z = (coords_non_robot[:, 2] >= scene_min[2]) & (coords_non_robot[:, 2] <= scene_max[2])
+            in_bounds = in_x & in_y & in_z
+
+            if in_bounds.sum() > 0:
+                env_coords_valid.append(coords_non_robot[in_bounds])
+                env_feats_valid.append(feats_non_robot[in_bounds])
+
+        if env_coords_valid:
+            all_coords_valid.append(torch.cat(env_coords_valid, dim=0))
+            all_feats_valid.append(torch.cat(env_feats_valid, dim=0))
+            valid_env_indices.append(i)
+
+    if not valid_env_indices:
+        return
+
+    # --- 2. Batched Optimization Loop ---
+    for step in range(args.online_map_update_steps):
+        # Set requires_grad for decoder parameters based on the current step
+        train_decoder = step >= (args.online_map_update_steps - args.online_decoder_update_steps)
+        for p in decoder.parameters():
+            p.requires_grad = train_decoder
+        
+        # Collect voxel features from all valid environments into a single batch
+        # This needs to be inside the loop as grid features are updated in every step
+        voxel_features_list = [grids[i].query_voxel_feature(all_coords_valid[idx]) for idx, i in enumerate(valid_env_indices)]
+        target_features_list = [all_feats_valid[idx] for idx in range(len(valid_env_indices))]
+
+        if not voxel_features_list:
+            continue
+
+        voxel_features_batch = torch.cat(voxel_features_list, dim=0)
+        target_features_batch = torch.cat(target_features_list, dim=0)
+
+        # Single forward pass through the decoder
+        pred_features_batch = decoder(voxel_features_batch)
+
+        # Compute a single loss for the entire batch
+        cos_sim = F.cosine_similarity(pred_features_batch, target_features_batch, dim=-1)
+        loss = 1.0 - cos_sim.mean()
+        
+        # Single backward pass and optimizer step
+        map_optimizer.zero_grad()
+        loss.backward()
+        map_optimizer.step()
+
+    # Restore requires_grad for decoder parameters for subsequent operations outside this function
+    for p in decoder.parameters():
+        p.requires_grad = True
+    
+    print(f"cos_sim_loss={loss.item()}")

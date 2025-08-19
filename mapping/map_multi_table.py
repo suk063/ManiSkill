@@ -16,9 +16,19 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 # local modules
-from mapping_lib.utils import get_visual_features, get_3d_coordinates, transform
+from mapping_lib.utils import get_visual_features, get_3d_coordinates
 from mapping_lib.voxel_hash_table import VoxelHashTable
 from mapping_lib.implicit_decoder import ImplicitDecoder
+from torchvision import transforms
+
+transform = transforms.Compose(
+    [
+        transforms.Normalize(
+            mean=(0.48145466, 0.4578275, 0.40821073),
+            std=(0.26862954, 0.26130258, 0.27577711),
+        ),
+    ]
+) 
 
 # --------------------------------------------------------------------------- #
 #  Dataset Class                                                              #

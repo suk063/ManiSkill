@@ -1,8 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch3d.ops import ball_query, sample_farthest_points
+# from pytorch3d.ops import ball_query, sample_farthest_points, knn_points
 import xformers.ops as xops
+
+from torch_geometric.nn import MLP, PointTransformerConv
+from torch_geometric.nn.pool import radius
+from torch_geometric.utils import to_dense_batch
 
 from typing import Optional
 from utils.operator import rotary_pe_3d
@@ -21,18 +25,20 @@ class PointNet(nn.Module):
         self.net = nn.Sequential(
             layer_init(nn.Linear(input_dim, 256)),
             nn.LayerNorm(256),
-            nn.ReLU(),
+            nn.GELU(),
             layer_init(nn.Linear(256, 256)),
             nn.LayerNorm(256),
-            nn.ReLU(),
+            nn.GELU(),
             layer_init(nn.Linear(256, output_dim)),
-            nn.LayerNorm(output_dim),
-            nn.ReLU(),
         )
 
-    def forward(self, x):
-        x = self.net(x)
-        return torch.max(x, dim=1)[0]
+    def forward(self, x, pad_mask=None):   # pad_mask: (B, L) True=pad
+        h = self.net(x)                     # (B, L, C)
+        if pad_mask is not None:
+            h = h.masked_fill(pad_mask[..., None], float('-inf'))
+        out = h.max(dim=1).values           # (B, C)
+        out[out.eq(float('-inf'))] = 0
+        return out
 
 class TransformerLayer(nn.Module):
     def __init__(
@@ -127,64 +133,62 @@ class TransformerLayer(nn.Module):
         out = self.norm2(src2 + self.dropout_ff(ff))
         return out
 
+class ZeroPos(nn.Module):
+    def __init__(self, out_dim: int):
+        super().__init__()
+        self.out_dim = out_dim
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x.new_zeros(x.size(0), self.out_dim)
+
 class LocalFeatureFusion(nn.Module):
     def __init__(
         self,
         dim: int,
-        n_heads: int = 8,
+        num_layers: int = 1,
         ff_mult: int = 4,
-        radius: float = 0.1,
-        k: int = 2,
+        radius: float = 0.12,
+        k: int = 1,
         dropout: float = 0.1,
+        use_rel_pos: bool = False
     ):
         super().__init__()
         self.radius, self.k = radius, k
-        self.attn = TransformerLayer(
-            d_model=dim,
-            n_heads=n_heads,
-            dim_feedforward=dim * ff_mult,
-            dropout=dropout,
-            use_xformers=False
-        )
-    # ----------------------------------------------------------
-    # Find neighbor indices within <radius>; pad with query itself
-    # ----------------------------------------------------------
-    def _neigh_indices(
-        self,
-        q_xyz: torch.Tensor,           # (B, N, 3)  – query coordinates
-        kv_xyz: torch.Tensor,          # (B, L, 3)  – scene coordinates
-        kv_pad: Optional[torch.Tensor] # (B, L) bool – True → padding
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns
-        -------
-        idx     : (B, N, k) long  – neighbor indices (query-padded)
-        invalid : (B, N, k) bool  – True → padding slot
-        """
-        dist = torch.cdist(q_xyz, kv_xyz)                      # (B, N, L)
-        if kv_pad is not None:
-            dist = dist.masked_fill(kv_pad[:, None, :], float("inf"))
 
-        # keep only points ≤ radius
-        dist = torch.where(dist <= self.radius, dist, float("inf"))
-        k = self.k
+        self.convs = nn.ModuleList()
+        self.ffns = nn.ModuleList()
+        self.norm1s = nn.ModuleList()
+        self.norm2s = nn.ModuleList()
 
-        # 1) take top-k closest (up to k). If fewer, remaining are arbitrary for now.
-        _, idx_topk = dist.topk(k, largest=False, dim=-1)      # (B, N, k)
+        for _ in range(num_layers):
+            # PointTransformerConv for local feature aggregation.
+            # It will update q_feat based on nearby kv_feat.
+            pos_nn = (MLP([3, dim, dim], plain_last=False, batch_norm=False) if use_rel_pos else ZeroPos(dim))
+            attn_nn = MLP([dim, dim], plain_last=False, batch_norm=False) # Maps q - k + pos_emb
 
-        # 2) mark invalid (padding) slots
-        gather_dist = dist.gather(-1, idx_topk)                # (B, N, k)
-        invalid = gather_dist.isinf()                          # True → padding slot
+            self.convs.append(
+                PointTransformerConv(
+                    in_channels=dim,
+                    out_channels=dim,
+                    pos_nn=pos_nn,
+                    attn_nn=attn_nn,
+                    add_self_loops=False  # This is a bipartite graph
+                )
+            )
+            self.norm1s.append(nn.LayerNorm(dim))
 
-        # 3) overwrite padding slots with dummy index 0 (will be replaced by query itself)
-        query_idx = torch.zeros_like(idx_topk)                 # value 0 is arbitrary
-        idx = torch.where(invalid, query_idx, idx_topk)        # (B, N, k)
+            # Feed-forward network
+            self.ffns.append(
+                nn.Sequential(
+                    nn.Linear(dim, dim * ff_mult),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(dim * ff_mult, dim),
+                    nn.Dropout(dropout)
+                )
+            )
+            self.norm2s.append(nn.LayerNorm(dim))
 
-        return idx, invalid
 
-    # ----------------------------------------------------------
-    # Forward pass
-    # ----------------------------------------------------------
     def forward(
         self,
         q_xyz:   torch.Tensor,                # (B, N, 3)
@@ -194,40 +198,44 @@ class LocalFeatureFusion(nn.Module):
         kv_pad:  Optional[torch.Tensor] = None  # (B, L) bool
     ) -> torch.Tensor:
         B, N, C = q_feat.shape
-        idx, invalid = self._neigh_indices(q_xyz, kv_xyz, kv_pad)  # (B, N, k)
+        L = kv_xyz.shape[1]
 
-        # Debug        
-        # num_valid = (~invalid).sum()
-        # print(f"Number of valid neighbors: {num_valid.item()}")
-        
-        # gather neighbor coordinates / features
-        batch = torch.arange(B, device=q_feat.device).view(B, 1, 1)
-        neigh_xyz  = kv_xyz[batch.expand_as(idx), idx]             # (B, N, k, 3)
-        neigh_feat = kv_feat[batch.expand_as(idx), idx]            # (B, N, k, C)
-        
-        # replace padding slots with the query point itself
-        q_xyz_expanded = q_xyz.unsqueeze(2).expand(-1, -1, self.k, -1)  # (B, N, k, 3)
-        q_feat_expanded = q_feat.unsqueeze(2).expand(-1, -1, self.k, -1)  # (B, N, k, C)
-        neigh_xyz[invalid] = q_xyz_expanded[invalid]
-        neigh_feat[invalid] = q_feat_expanded[invalid]
+        # 1. Convert dense tensors to PyG format (flat vectors + batch indices)
+        q_xyz_flat = q_xyz.reshape(-1, 3)
+        out = q_feat.reshape(-1, C)
+        q_batch = torch.arange(B, device=q_xyz.device).repeat_interleave(N)
 
-        # concatenate query token with neighbor tokens
-        tokens = torch.cat([q_feat.unsqueeze(2), neigh_feat], dim=2)  # (B, N, k+1, C)
-        # token_xyz = torch.cat([q_xyz.unsqueeze(2), neigh_xyz], dim=2)  # (B, N, k+1, 3)
-        
-        # key-padding mask for attention (True → ignore)
-        key_padding_mask = torch.cat(
-            [torch.zeros_like(invalid[..., :1]), invalid], dim=-1
-        ).view(B * N, self.k + 1)
+        if kv_pad is not None:
+            kv_mask = ~kv_pad
+            kv_xyz_flat = kv_xyz[kv_mask]
+            kv_feat_flat = kv_feat[kv_mask]
+            kv_batch_full = torch.arange(B, device=kv_xyz.device).unsqueeze(1).expand(B, L)
+            kv_batch = kv_batch_full[kv_mask]
+        else:
+            kv_xyz_flat = kv_xyz.reshape(-1, 3)
+            kv_feat_flat = kv_feat.reshape(-1, C)
+            kv_batch = torch.arange(B, device=kv_xyz.device).repeat_interleave(L)
 
-        # reshape to (B*N, S, C) for the transformer layer
-        BM = B * N
-        fused = self.attn(
-            tokens.view(BM, self.k + 1, C).contiguous(),
-            key_padding_mask=key_padding_mask,
-        )  # (BM, k+1, C)
+        # 2. Find neighbors from kv for each q point
+        target_idx, source_idx = radius(x=kv_xyz_flat, y=q_xyz_flat, r=self.radius,
+                          batch_x=kv_batch, batch_y=q_batch, max_num_neighbors=self.k)
 
-        # return only the query position (index 0 within each group)
-        fused_q = fused[:, 0, :].view(B, N, C)
-        
-        return fused_q
+        edge_index = torch.stack([source_idx, target_idx], dim=0)
+
+        # 3. Apply layers of PointTransformerConv for bipartite cross-attention
+        for i in range(len(self.convs)):
+            updated_q_feat = self.convs[i](
+                x=(kv_feat_flat, out),
+                pos=(kv_xyz_flat, q_xyz_flat),
+                edge_index=edge_index
+            )
+
+            # Residual connection, FFN, and normalization
+            out = self.norm1s[i](out + updated_q_feat)
+            out2 = self.ffns[i](out)
+            out = self.norm2s[i](out + out2)
+
+        # 5. Convert back to dense tensor (B, N, C)
+        final_feat, _ = to_dense_batch(out, q_batch, batch_size=B, max_num_nodes=N)
+
+        return final_feat

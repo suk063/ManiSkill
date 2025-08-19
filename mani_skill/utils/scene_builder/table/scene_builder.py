@@ -8,6 +8,7 @@ import sapien.render
 import torch
 from transforms3d.euler import euler2quat
 
+from mani_skill import PACKAGE_ASSET_DIR
 from mani_skill.agents.multi_agent import MultiAgent
 from mani_skill.agents.robots.fetch import FETCH_WHEELS_COLLISION_BIT
 from mani_skill.utils.building.ground import build_ground
@@ -19,10 +20,12 @@ class TableSceneBuilder(SceneBuilder):
     """A simple scene builder that adds a table to the scene such that the height of the table is at 0, and
     gives reasonable initial poses for robots."""
 
-    def __init__(self, env, robot_init_qpos_noise=0.02, custom_table=False, randomize_colors=False):
+    def __init__(self, env, robot_init_qpos_noise=0.02, custom_table=False, custom_basket=False, randomize_colors=False, basket_color="orange"):
         super().__init__(env, robot_init_qpos_noise)
         self.custom_table = custom_table
+        self.custom_basket = custom_basket
         self.randomize_colors = randomize_colors
+        self.basket_color = basket_color
 
     def _build_custom_table(self, length: float, width: float, height: float, random_i = -1):
         """
@@ -88,6 +91,84 @@ class TableSceneBuilder(SceneBuilder):
             table_actor = builder.build_kinematic(name="table-custom")
         return table_actor
     
+    def _build_custom_basket(self, color="orange", table_center_x=0.0, table_center_y=0.0, table_surface_z=0.0, random_i=-1):
+        """
+        Build a custom basket positioned at the center of the table.
+        
+        Args:
+            color: Color of the basket (used when random_i < 0)
+            table_center_x: X coordinate of table center
+            table_center_y: Y coordinate of table center  
+            table_surface_z: Z coordinate of the table surface
+            random_i: Environment index for randomization (-1 for no randomization)
+        """
+        color_map = {
+            "blue":    [0.12156862745098039, 0.4666666666666667, 0.7058823529411765, 1],
+            "orange":  [1.0, 0.4980392156862745, 0.054901960784313725, 1],
+            "green":   [0.17254901960784313, 0.6274509803921569, 0.17254901960784313, 1],
+            "red":     [0.8392156862745098, 0.15294117647058825, 0.1568627450980392, 1],
+            "yellow":  [1.0, 0.8941176470588236, 0.0, 1],
+            "purple":  [0.5803921568627451, 0.403921568627451, 0.7411764705882353, 1],
+            "brown":   [0.5490196078431373, 0.33725490196078434, 0.29411764705882354, 1],
+            "pink":    [0.8901960784313725, 0.4666666666666667, 0.7607843137254902, 1],
+            "gray":    [0.4980392156862745, 0.4980392156862745, 0.4980392156862745, 1],
+            "olive":   [0.7372549019607844, 0.7411764705882353, 0.13333333333333333, 1],
+            "cyan":    [0.09019607843137255, 0.7450980392156863, 0.8117647058823529, 1],
+        }
+        self.basket_model_path = str(PACKAGE_ASSET_DIR / "custom/plastic_crate.obj")
+
+        basket_builder = self.scene.create_actor_builder()
+        basket_mat = sapien.render.RenderMaterial()
+        
+        # Set basket color - randomized or fixed
+        if random_i >= 0:
+            # Randomize color
+            random_color = self.env._batched_episode_rng[random_i].uniform(low=0., high=1., size=(3, )).tolist() + [1]
+            basket_mat.set_base_color(random_color)
+            basket_builder.set_scene_idxs([random_i])
+        else:
+            # Use fixed color
+            basket_mat.set_base_color(color_map[color])
+            
+        basket_mat.metallic = 0.0
+        basket_mat.roughness = 1.0
+        basket_mat.specular = 1.0
+        
+        # NOTE (Sunghwan): scale is set to 0.003 for x and y, and 0.006 for z.
+        basket_builder.add_visual_from_file(
+            self.basket_model_path,
+            scale=[0.002, 0.003, 0.003],
+            material=basket_mat,
+        ) # now size is 0.24 * 0.24 * 0.132
+        
+        basket_builder.add_nonconvex_collision_from_file(
+            filename=self.basket_model_path,
+            scale=[0.002, 0.003, 0.003]
+        )
+        
+        # Position basket at center of table, on top of the table surface
+        # The basket's bottom should sit on the table surface
+        # (sunghwan) (NOTE) move basket toward x axis and rotate 1/4 pi
+        basket_z = table_surface_z - 0.1135  # 37.8518 * 0.003
+        # basket_pose = sapien.Pose(
+        #     p=[table_center_x + 0.05, table_center_y, basket_z],
+        #     q=euler2quat(np.pi/2, 0, np.pi * 1 / 4)  # 90 degree rotation around X-axis to lay basket horizontally
+        # )
+        basket_pose = sapien.Pose(
+            p=[table_center_x + 0.05, table_center_y, basket_z],
+            q=euler2quat(0, 0, 0)  # 90 degree rotation around X-axis to lay basket horizontally
+        )
+        basket_builder.initial_pose = basket_pose
+        
+        # (sunghwan) (NOTE) build static basket to make problem easier
+        if random_i >= 0:
+            # basket = basket_builder.build(name=f"basket_{random_i}")
+            basket = basket_builder.build_static(name=f"basket_{random_i}")
+        else:
+            # basket = basket_builder.build(name=f"basket_{color}")
+            basket = basket_builder.build_static(name=f"basket_{color}")
+        return basket
+    
     def _build_custom_wall(self, table_pose: sapien.Pose, length: float):
         wall_size = [0.2, 10.0, 4.0]
         wall_half = [s / 2 for s in wall_size]
@@ -119,7 +200,7 @@ class TableSceneBuilder(SceneBuilder):
                 self._tables: List[Actor] = []
                 for i in range(self.env.num_envs):
                     self._tables.append(self._build_custom_table(length=1.52, width=0.76, height=self.table_height, random_i=i))
-                    self.env.remove_from_state_dict_registry(self._tables[-1])  # remove individual cube from state dict
+                    self.env.remove_from_state_dict_registry(self._tables[-1])  # remove individual table from state dict
 
                 # Merge all tables into a single Actor object
                 self.table = Actor.merge(self._tables, name="table")
@@ -168,25 +249,91 @@ class TableSceneBuilder(SceneBuilder):
             self.table_width = aabb[1, 1] - aabb[0, 1]
             self.table_height = aabb[1, 2] - aabb[0, 2]
         
+        # Build basket if requested
+        if self.custom_basket:
+            if self.randomize_colors:
+                # Build baskets separately for each parallel environment to enable domain randomization
+                self._baskets: List[Actor] = []
+                for i in range(self.env.num_envs):
+                    if self.custom_table:
+                        # For custom table, it will be positioned at [-0.2245382, 0, -table_height] in initialize()
+                        basket = self._build_custom_basket(
+                            color=self.basket_color, 
+                            table_center_x=-0.2245382, 
+                            table_center_y=0.0, 
+                            table_surface_z=0.0,  # Table surface will be at z=0 after positioning
+                            random_i=i
+                        )
+                    else:
+                        # For default GLB table, it's positioned at [-0.12, 0, -0.9196429]
+                        basket = self._build_custom_basket(
+                            color=self.basket_color,
+                            table_center_x=-0.12,
+                            table_center_y=0.0,
+                            table_surface_z=0.0,  # Table surface will be at z=0 after positioning
+                            random_i=i
+                        )
+                    self._baskets.append(basket)
+                    self.env.remove_from_state_dict_registry(self._baskets[-1])  # remove individual basket from state dict
+
+                # Merge all baskets into a single Actor object
+                self.basket = Actor.merge(self._baskets, name="basket")
+            else:
+                # Non-randomized basket
+                if self.custom_table:
+                    # For custom table, it will be positioned at [-0.2245382, 0, -table_height] in initialize()
+                    # So the basket should be positioned relative to that
+                    self.basket = self._build_custom_basket(
+                        color=self.basket_color, 
+                        table_center_x=-0.2245382, 
+                        table_center_y=0.0, 
+                        table_surface_z=0.0  # Table surface will be at z=0 after positioning
+                    )
+                else:
+                    # For default GLB table, it's positioned at [-0.12, 0, -0.9196429]
+                    # So table surface will be at z=0 
+                    self.basket = self._build_custom_basket(
+                        color=self.basket_color,
+                        table_center_x=-0.12,
+                        table_center_y=0.0,
+                        table_surface_z=0.0  # Table surface will be at z=0 after positioning
+                    )
+        
         floor_width = 100
         if self.scene.parallel_in_single_scene:
             floor_width = 500
         self.ground = build_ground(
             self.scene, floor_width=floor_width, altitude=-self.table_height
         )
+        
+        # Build scene objects list
+        scene_objects = [self.table, self.ground]
         if self.custom_table:
-            self.scene_objects: List[sapien.Entity] = [self.table, self.wall, self.ground]
+            if self.custom_basket:
+                self.scene_objects: List[sapien.Entity] = [self.table, self.wall, self.basket, self.ground]
+            else:
+                self.scene_objects: List[sapien.Entity] = [self.table, self.wall, self.ground]
         else:
-            self.scene_objects: List[sapien.Entity] = [self.table, self.ground]
+            if self.custom_basket:
+                self.scene_objects: List[sapien.Entity] = [self.table, self.basket, self.ground]
+            else:
+                self.scene_objects: List[sapien.Entity] = [self.table, self.ground]
 
     def cleanup(self):
-        """Clean up individual table actors created for domain randomization to prevent memory leaks."""
+        """Clean up individual table and basket actors created for domain randomization to prevent memory leaks."""
         if hasattr(self, '_tables'):
             # Remove individual tables from the scene
             for table in self._tables:
                 if hasattr(table, 'entity') and table.entity is not None:
                     self.env.scene.remove_actor(table)
             self._tables.clear()
+            
+        if hasattr(self, '_baskets'):
+            # Remove individual baskets from the scene
+            for basket in self._baskets:
+                if hasattr(basket, 'entity') and basket.entity is not None:
+                    self.env.scene.remove_actor(basket)
+            self._baskets.clear()
 
     def initialize(self, env_idx: torch.Tensor):
         # table_height = 0.9196429

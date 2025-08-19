@@ -7,15 +7,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 COMMON_ARGS=(
-  --env_id=PickCubeDiscreteInit-v1
+  --env_id=PickYCBCustom-v1 # PickYCBCustom-v1
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
+  # --num_envs=50
   --num_envs=50
   --num_eval_envs=20
   --eval_freq=20
   --total_timesteps=100_000_000
-  --num_steps=100
-  --gamma=0.9
+  --num_steps=200
+  --num_eval_steps=200
+  --gamma=0.95
   --capture-video
   --track
   --wandb_project_name "PPO-RL-Map"
@@ -26,29 +28,31 @@ run_cfg() {
   echo "=== Running: ${TAG} ==="
   python map_rl/train_ppo.py \
     "${COMMON_ARGS[@]}" \
-    --exp_name=PickCube_xarm6_ppo__${TAG} \
+    --exp_name=PickYCB_xarm6_ppo__${TAG} \
     --wandb_tags ${TAG} \
     "$@"
 }
 
 # 1) plain-cnn / no map
-run_cfg plain-cnn-no-map \
-  --vision_encoder=plain_cnn
+# run_cfg plain-cnn-no-map \
+#   --vision_encoder=plain_cnn
 
 # 2) plain-cnn / map / no local fusion
-run_cfg plain-cnn-map-no-local-fusion \
-  --use_map \
-  --vision_encoder=plain_cnn
+# run_cfg plain-cnn-map-no-local-fusion \
+#   --use_map \
+#   --vision_encoder=plain_cnn \
+  # --checkpoint=runs/PickYCB_xarm6_ppo__plain-cnn-map-local-fusion/ckpt_latest.pt
 
 # 3) plain-cnn / map / local fusion
-run_cfg plain-cnn-map-local-fusion \
-  --use_map \
-  --use_local_fusion \
-  --vision_encoder=plain_cnn
+# run_cfg plain-cnn-map-local-fusion \
+#   --use_map \
+#   --use_local_fusion \
+#   --vision_encoder=plain_cnn \
+#   --checkpoint=runs/PickYCB_xarm6_ppo__plain-cnn-map-local-fusion/ckpt_latest.pt
 
 # 4) dino / no map
-run_cfg dino-no-map \
-  --vision_encoder=dino
+# run_cfg dino-no-map \
+#   --vision_encoder=dino
 
 # 5) dino / map / no local fusion
 run_cfg dino-map-no-local-fusion \
@@ -56,7 +60,22 @@ run_cfg dino-map-no-local-fusion \
   --vision_encoder=dino
 
 # 6) dino / map / local fusion
-run_cfg dino-map-local-fusion \
-  --use_map \
-  --use_local_fusion \
-  --vision_encoder=dino
+# run_cfg dino-map-local-fusion \
+#   --use_map \
+#   --use_local_fusion \
+#   --vision_encoder=dino
+
+# 7) plain-cnn / map / local fusion / online mapping
+# run_cfg plain-cnn-map-local-fusion-online \
+#   --use_map \
+#   --use_local_fusion \
+#   --vision_encoder=plain_cnn \
+#   --use_online_mapping
+
+# 8) dino / map / local fusion / online mapping
+# run_cfg dino-map-local-fusion-online \
+#   --use_map \
+#   --use_local_fusion \
+#   --vision_encoder=dino \
+#   --use_online_mapping \
+  # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-online/ckpt_latest.pt
