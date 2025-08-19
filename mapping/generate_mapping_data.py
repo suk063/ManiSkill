@@ -1,6 +1,7 @@
 import argparse
 import numpy as np
 import open3d as o3d
+import plotly.graph_objects as go
 from transforms3d.quaternions import mat2quat
 from typing import List
 import sapien
@@ -13,7 +14,7 @@ import glob
 # MARK: Parse command line arguments
 parser = argparse.ArgumentParser(description="Scan an object and generate a point cloud.")
 parser.add_argument("-o", "--obs-mode", type=str, default="rgbd", help="Can be rgb or rgb+depth, rgb+normal, albedo+depth etc. Which ever image-like textures you want to visualize can be tacked on")
-parser.add_argument("-n", "--num-envs", type=int, default=200, help="Total number of environments to process")
+parser.add_argument("-n", "--num-envs", type=int, default=100, help="Total number of environments to process")
 parser.add_argument("-s","--seed",type=int, default=0, help="Seed the random actions and environment. Default is no seed",)
 args = parser.parse_args()
 
@@ -31,26 +32,6 @@ def load_poses_from_npy(path: Path) -> List[np.ndarray]:
         raise FileNotFoundError(f"No .npy pose files found in {path}")
     return [np.load(f) for f in pose_files]
 
-def visualize_point_cloud(pcd: o3d.geometry.PointCloud):
-    """Visualize point cloud with coordinate axes."""
-    vis = o3d.visualization.Visualizer()
-    vis.create_window()
-    vis.add_geometry(pcd)
-    
-    # Add coordinate frame
-    coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-    vis.add_geometry(coord_frame)
-    
-    # Set viewing parameters
-    ctr = vis.get_view_control()
-    ctr.set_zoom(0.8)
-    ctr.set_lookat([0, 0, 0])
-    ctr.set_up([0, -1, 0]) # Set Y-down as up vector for better initial view
-    ctr.set_front([0, 0, -1])
-
-    print("Visualizing point cloud. Close the window to continue.")
-    vis.run()
-    vis.destroy_window()
 
 # ------------------------------------------------------------------
 if args.seed is not None:
@@ -102,6 +83,7 @@ for i in range(args.num_envs):
     env_dir = DATASET_DIR / f"env_{i:03d}"
     (env_dir / "rgb").mkdir(parents=True, exist_ok=True)
     (env_dir / "depth").mkdir(parents=True, exist_ok=True)
+    (env_dir / "global_idx.txt").write_text(str(i))
 
 # ------------------------------------------------------------------ #
 # Prepare containers for multiview point cloud aggregation
@@ -214,7 +196,47 @@ if pts_all[0]:
     pcd_downsampled = pcd_env0.voxel_down_sample(voxel_size=0.005)
     print(f"Original points: {len(pcd_env0.points)}, downsampled to {len(pcd_downsampled.points)}")
     
-    visualize_point_cloud(pcd_downsampled)
+    points = np.asarray(pcd_downsampled.points)
+    colors = np.asarray(pcd_downsampled.colors)
+    
+    fig = go.Figure(data=[go.Scatter3d(
+        x=points[:, 0], y=points[:, 1], z=points[:, 2],
+        mode='markers',
+        marker=dict(
+            size=2,
+            color=colors,
+            opacity=0.8
+        )
+    )])
+    
+    # Set aspect ratio and labels
+    x_range = [points[:, 0].min(), points[:, 0].max()]
+    y_range = [points[:, 1].min(), points[:, 1].max()]
+    z_range = [points[:, 2].min(), points[:, 2].max()]
+    max_range = np.array([x_range[1]-x_range[0], y_range[1]-y_range[0], z_range[1]-z_range[0]]).max() / 2.0
+    
+    mid_x = (x_range[0] + x_range[1]) / 2.0
+    mid_y = (y_range[0] + y_range[1]) / 2.0
+    mid_z = (z_range[0] + z_range[1]) / 2.0
+    
+    fig.update_layout(
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z',
+            xaxis=dict(range=[mid_x - max_range, mid_x + max_range]),
+            yaxis=dict(range=[mid_y - max_range, mid_y + max_range]),
+            zaxis=dict(range=[mid_z - max_range, mid_z + max_range]),
+            aspectratio=dict(x=1, y=1, z=1)
+        ),
+        margin=dict(l=0, r=0, b=0, t=40),
+        title="Point Cloud Visualization"
+    )
+    
+    output_path = DATASET_DIR / "point_cloud.html"
+    fig.write_html(output_path)
+    print(f"Point cloud visualization saved to {output_path}")
+
 else:
     print("\nNo points captured for env_000, skipping visualization.")
 
