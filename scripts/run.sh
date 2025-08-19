@@ -40,4 +40,5 @@ run_cfg cnn-map-local-fusion \
   --use_local_fusion \
   --vision_encoder=plain_cnn \
   --map_start_iteration=10000000 \
+  --camera_uids=base_camera \
   # --checkpoint=pretrained/ckpt_latest.pt \
