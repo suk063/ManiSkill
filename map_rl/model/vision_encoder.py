@@ -14,27 +14,22 @@ class DINO2DFeatureEncoder(nn.Module):
         self,
         embed_dim: int = 64,
         model_name: str = "dinov2_vits14",
-        freeze_backbone: bool = False,
+        freeze_backbone: bool = True,
     ) -> None:
         super().__init__()
 
         # Load backbone lazily via torch.hub to avoid extra dependencies
         self.backbone = torch.hub.load("facebookresearch/dinov2", model_name)
+        # self.backbone = torch.hub.load('dinov3', 'dinov3_vits16', source='local', weights=WEIIGHT_PATH)
         self.dino_output_dim = 384
         self.dino_proj = nn.Conv2d(self.dino_output_dim, embed_dim, kernel_size=1)
         self.embed_dim = embed_dim
+        self.freeze_backbone = freeze_backbone
 
         if freeze_backbone:
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
-        # DINOv2 normalization
-        self.normalize = transforms.Normalize(
-            mean=(0.48145466, 0.4578275, 0.40821073),
-            std=(0.26862954, 0.26130258, 0.27577711),
-        )
-
-    @torch.no_grad()
     def _forward_dino_tokens(self, x: torch.Tensor) -> torch.Tensor:
         """
         Returns per-patch token embeddings without the [CLS] token.
@@ -57,18 +52,21 @@ class DINO2DFeatureEncoder(nn.Module):
         """
         if images_bchw.dtype != torch.float32:
             images_bchw = images_bchw.float()
-        # Normalize per DINOv2 recipe
-        images_bchw = self.normalize(images_bchw)
 
         B, _, H, W = images_bchw.shape
-        tokens = self._forward_dino_tokens(images_bchw)  # (B, N, C)
+        
+        if self.freeze_backbone:
+            with torch.no_grad():
+                tokens = self._forward_dino_tokens(images_bchw)
+        else:
+            tokens = self._forward_dino_tokens(images_bchw)
 
         C = self.dino_output_dim
         Hf, Wf = H // 14, W // 14
         fmap = tokens.permute(0, 2, 1).reshape(B, C, Hf, Wf).contiguous()
         fmap = self.dino_proj(fmap)
+        
         return fmap
-
 
 class PlainCNNFeatureEncoder(nn.Module):
     """

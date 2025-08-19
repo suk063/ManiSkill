@@ -13,7 +13,7 @@ from torchvision import transforms
 
 transform = transforms.Compose(
     [
-        transforms.Resize(size=84, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
+        transforms.Resize(size=224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
         transforms.Normalize(
             mean=(0.48145466, 0.4578275, 0.40821073),
             std=(0.26862954, 0.26130258, 0.27577711),
@@ -30,8 +30,9 @@ class FeatureExtractor(nn.Module):
             decoder: Optional[nn.Module] = None,
             use_map: bool = True,
             use_local_fusion: bool = False,
-            text_embeddings: Optional[torch.Tensor] = None,
+            num_tasks: int = 2,
             camera_uids: Union[str, List[str]] = "base_camera",
+            freeze_dino_backbone: bool = True,
         ) -> None:
         super().__init__()
         
@@ -43,11 +44,11 @@ class FeatureExtractor(nn.Module):
         object.__setattr__(self, "_decoder", decoder)  # None → RGB-only mode
         
         if vision_encoder == 'dino':
-            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64)
-            n_flatten = 36 * self.vision_encoder.embed_dim # 36 = 6 * 6
+            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64, freeze_backbone=freeze_dino_backbone)
+            n_flatten = 16 * 16 * self.vision_encoder.embed_dim
         elif vision_encoder == 'plain_cnn':
             self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=64)
-            n_flatten = 36 * self.vision_encoder.embed_dim # 36 = 6 * 6
+            n_flatten = 14 * 14 * self.vision_encoder.embed_dim
         else:
             raise ValueError(f"Vision encoder {vision_encoder} not supported")
         
@@ -77,15 +78,17 @@ class FeatureExtractor(nn.Module):
             state_size = sample_obs["state"].shape[-1]
             self.state_proj = nn.Linear(state_size, feature_size)
 
-        self.text_proj = None
-        if text_embeddings is not None:
-            self.text_proj = nn.Linear(text_embeddings.shape[-1], feature_size)
+        self.task_embedding = None
+        if num_tasks > 0:
+            self.task_embedding = nn.Embedding(num_tasks, feature_size)
 
-        num_branches = 1  # state
+        num_branches = 0
+        if "state" in sample_obs:
+            num_branches += 1  # state
         num_branches += self.num_cameras  # global RGB 
         if self.use_map:
             num_branches += 1  # global map
-        if text_embeddings is not None:
+        if num_tasks > 0:
             num_branches += 1
         self.output_dim = num_branches * feature_size
 
@@ -114,7 +117,7 @@ class FeatureExtractor(nn.Module):
         # pose = observations["sensor_param"]["base_camera"]["extrinsic_cv"]
         pose = observations["sensor_param"][camera_uid]["extrinsic_cv"]
 
-        Hf = Wf = 6
+        Hf = Wf = image_fmap.size(2)
         depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
         
         fx = fy = observations["sensor_param"][camera_uid]["intrinsic_cv"][0][0][0]
@@ -153,11 +156,10 @@ class FeatureExtractor(nn.Module):
         if self.state_proj is not None:
             encoded.append(self.state_proj(observations["state"]))
 
-        if self.text_proj is not None:
+        if self.task_embedding is not None:
             assert env_target_obj_idx is not None, "env_target_obj_idx must be provided"
-            
-            target_text_embeddings = self.text_embeddings[env_target_obj_idx]
-            encoded.append(self.text_proj(target_text_embeddings))
+            task_emb = self.task_embedding(env_target_obj_idx)
+            encoded.append(task_emb)
 
         # 1. Process multiple camera inputs by batching them
         rgb_all_cameras = observations["rgb"].float().permute(0, 3, 1, 2) / 255.0
@@ -240,14 +242,11 @@ class Agent(nn.Module):
         use_map: bool = True, 
         use_local_fusion: bool = False, 
         vision_encoder: str = "plain_cnn",
-        text_embeddings: Optional[torch.Tensor] = None,
+        num_tasks: int = 2,
         camera_uids: Union[str, List[str]] = "base_camera",
+        freeze_dino_backbone: bool = True,
     ):
         super().__init__()
-        if text_embeddings is not None:
-            self.register_buffer("text_embeddings", text_embeddings)
-        else:
-            self.text_embeddings = None
 
         self.feature_net = FeatureExtractor(
             sample_obs=sample_obs, 
@@ -255,8 +254,9 @@ class Agent(nn.Module):
             use_map=use_map, 
             use_local_fusion=use_local_fusion, 
             vision_encoder=vision_encoder,
-            text_embeddings=self.text_embeddings,
+            num_tasks=num_tasks,
             camera_uids=camera_uids,
+            freeze_dino_backbone=freeze_dino_backbone,
         )
         latent_size = self.feature_net.output_dim
         
@@ -282,7 +282,6 @@ class Agent(nn.Module):
         self.actor_logstd = nn.Parameter(
             torch.ones(1, int(np.prod(envs.unwrapped.single_action_space.shape))) * -0.5
         )
-        self.feature_net.text_embeddings = self.text_embeddings
 
     # Convenience helpers -----------------------------------------------------
 

@@ -11,15 +11,13 @@ COMMON_ARGS=(
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
   --num_envs=32
-  --num_eval_envs=20
+  --num_eval_envs=12
   --eval_freq=20
   --total_timesteps=100_000_000
-  --num_steps=500
-  --num_eval_steps=500
-  --gamma=0.99
-  --gae_lambda=0.95
-  --update_epochs=8
-  --learning_rate=3e-4
+  --num_steps=400
+  --num_eval_steps=400
+  --gamma=0.9
+  --learning_rate=5e-4
   --capture-video
   --track
   --wandb_project_name "PPO-RL-Map"
@@ -35,9 +33,10 @@ run_cfg() {
     "$@"
 }
 
-run_cfg cnn-map-local-fusion \
+run_cfg dino-map-local-fusion-base-cam-2-stage  \
   --use_map \
   --use_local_fusion \
-  --vision_encoder=plain_cnn \
-  --map_start_iteration=100000000 \
-  # --checkpoint=pretrained/ckpt_latest.pt \
+  --vision_encoder=dino \
+  --map_start_iteration=10000000 \
+  --camera_uids=base_camera \
+  # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-hand-cam/ckpt_latest.pt \

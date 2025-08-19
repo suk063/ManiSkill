@@ -79,7 +79,7 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 400
+    num_envs: int = 100
     """the number of parallel environments"""
     num_eval_envs: int = 20
     """the number of parallel evaluation environments"""
@@ -93,7 +93,7 @@ class Args:
     """the number of steps to run in each evaluation environment during evaluation"""
     reconfiguration_freq: Optional[int] = None
     """how often to reconfigure the environment during training"""
-    eval_reconfiguration_freq: Optional[int] = 1
+    eval_reconfiguration_freq: Optional[int] = None
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
@@ -144,17 +144,19 @@ class Args:
     """Scale the reward by this factor"""
     eval_freq: int = 25
     """evaluation frequency in terms of iterations"""
+    checkpoint_freq: int = 100
+    """checkpoint saving frequency in terms of iterations"""
     save_train_video_freq: Optional[int] = None
     """frequency to save training videos in terms of iterations"""
     finite_horizon_gae: bool = False
 
     # task specification
     # (NOTE): the order should match the order of the model_ids in the env
-    model_ids: List[str] = field(default_factory=lambda: ["tomato_soup_can", "gelatin_box", "bowl", "apple", "banana"])
+    model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "005_tomato_soup_can", "009_gelatin_box", "011_banana"])
 
     # Environment discretisation
-    grid_dim: int = 10
-    """Number of cells per axis used for discrete initialisation (N×N grid)."""
+    total_envs: int = 100
+    """Number of cells per axis used for discrete initialisation."""
 
     # Map-related arguments
     use_map: bool = False
@@ -163,9 +165,13 @@ class Args:
     """if toggled, use the local fusion of the image and map features"""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
-    map_dir: str = "mapping/multi_env_maps_cube"
+    freeze_dino_backbone: bool = False
+    """if toggled, freeze the DINO backbone"""
+    dino_lr: float = 5e-6
+    """learning rate for the DINO backbone if fine-tuning"""
+    map_dir: str = "mapping/multi_env_maps"
     """Directory where the trained environment maps are stored."""
-    decoder_path: str = "mapping/multi_env_maps_cube/shared_decoder.pt"
+    decoder_path: str = "mapping/multi_env_maps/shared_decoder.pt"
     """Path to the trained shared decoder model."""
 
     # Online mapping arguments
@@ -214,39 +220,27 @@ if __name__ == "__main__":
     args.device = device
 
     # --- Load CLIP model for text and online mapping ---
-    print("--- Loading CLIP model ---")
-    clip_model_name = "EVA02-L-14"
-    clip_weights_id = "merged2b_s4b_b131k"
-    clip_model, _, _ = open_clip.create_model_and_transforms(
-        clip_model_name, pretrained=clip_weights_id
-    )
-    clip_model = clip_model.to(device)
-    
-    # --- Generate text embeddings for model_ids ---
-    text_input = [f"pick up the {s.replace('_', ' ')}" for s in args.model_ids]
-    tokenizer = open_clip.get_tokenizer(clip_model_name)
-    text_tokens = tokenizer(text_input).to(device)
-    with torch.no_grad():
-        text_embeddings = clip_model.encode_text(text_tokens)
-        text_embeddings = F.normalize(text_embeddings, dim=-1, p=2)
-    print("--- Text embeddings generated ---")
-
-    # Add camera_uids to args to be accessed by mapping functions
-    args.camera_uids = args.camera_uids
-
+    clip_model = None
     if args.use_online_mapping:
-        print("--- Setting CLIP model for online mapping ---")
+        print("--- Loading CLIP model for online mapping ---")
+        clip_model_name = "EVA02-L-14"
+        clip_weights_id = "merged2b_s4b_b131k"
+        clip_model, _, _ = open_clip.create_model_and_transforms(
+            clip_model_name, pretrained=clip_weights_id
+        )
+        clip_model = clip_model.to(device)
         clip_model.eval()
         for param in clip_model.parameters():
             param.requires_grad = False
     else:
-        del clip_model, tokenizer
-        clip_model = None
-        print("--- CLIP model removed from memory ---")
+        print("--- CLIP model not loaded as online mapping is disabled ---")
+
+    # Add camera_uids to args to be accessed by mapping functions
+    args.camera_uids = args.camera_uids
 
     # --- Load Maps and Decoder ---
     # Always define total number of discrete environments
-    total_envs = args.grid_dim ** 2
+    total_envs = args.total_envs
     # Placeholders for map-related variables to avoid NameError when use_map is False
     all_grids = None
     grid_sampler = None
@@ -280,7 +274,7 @@ if __name__ == "__main__":
             exit()
 
         # 2. Load ALL grids (grid_dim²) and build sampling helper
-        total_envs = args.grid_dim ** 2
+        total_envs = args.total_envs
         all_grids = []
         if not os.path.exists(args.map_dir):
             print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
@@ -329,8 +323,8 @@ if __name__ == "__main__":
     #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim, camera_uids=args.camera_uids)
-    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
+    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", camera_uids=args.camera_uids)
+    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", total_envs=args.total_envs)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
@@ -425,8 +419,9 @@ if __name__ == "__main__":
         decoder=decoder if args.use_map else None, 
         use_local_fusion=args.use_local_fusion, 
         vision_encoder=args.vision_encoder,
-        text_embeddings=text_embeddings,
+        num_tasks=len(args.model_ids),
         camera_uids=args.camera_uids,
+        freeze_dino_backbone=args.freeze_dino_backbone,
     ).to(device)
     # Use differential learning rates for DINO backbone vs. the rest
     if args.vision_encoder == "dino":
@@ -434,18 +429,21 @@ if __name__ == "__main__":
             dino_backbone_params = list(agent.feature_net.vision_encoder.backbone.parameters())
             dino_backbone_param_ids = set(map(id, dino_backbone_params))
             other_params = [p for p in agent.parameters() if id(p) not in dino_backbone_param_ids]
-            optimizer = optim.AdamW(
-                [
-                    {"params": dino_backbone_params, "lr": 1e-5},
-                    {"params": other_params, "lr": args.learning_rate},
-                ],
-                eps=1e-5,
-            )
+            
+            param_groups = [{"params": other_params, "lr": args.learning_rate}]
+            
+            if not args.freeze_dino_backbone:
+                param_groups.append({"params": dino_backbone_params, "lr": args.dino_lr})
+                print(f"--- Fine-tuning DINO backbone with learning rate {args.dino_lr} ---")
+            else:
+                print("--- DINO backbone is frozen ---")
+
+            optimizer = optim.Adam(param_groups, eps=1e-5)
         except AttributeError:
             # Fallback in case the backbone structure changes
-            optimizer = optim.AdamW(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+            optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     else:
-        optimizer = optim.AdamW(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+        optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     # KL penalty coefficient (adaptive)
     kl_coef = args.kl_coef
 
@@ -522,18 +520,18 @@ if __name__ == "__main__":
                 eval_map_optimizer = None
 
             # (NOTE): debugging code to save target objects ---
-            # target_obj_indices = eval_infos['env_target_obj_idx_1'].cpu().numpy()
-            # target_obj_indices_2 = eval_infos['env_target_obj_idx_2'].cpu().numpy()
-            # target_obj_names = [args.model_ids[i] for i in target_obj_indices]
-            # target_obj_names_2 = [args.model_ids[i] for i in target_obj_indices_2]
-            # output_path = os.path.join(f"runs/{run_name}", "eval_target_objects.txt")
-            # os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            # with open(output_path, "w") as f:
-            #     for i, name in enumerate(target_obj_names):
-            #         f.write(f"eval_env_{i}: {name}\n")
-            #     for i, name in enumerate(target_obj_names_2):
-            #         f.write(f"eval_env_{i}: {name}\n")
-            # print(f"Saved eval target objects to {output_path}")
+            target_obj_indices = eval_infos['env_target_obj_idx_1'].cpu().numpy()
+            target_obj_indices_2 = eval_infos['env_target_obj_idx_2'].cpu().numpy()
+            target_obj_names = [args.model_ids[i] for i in target_obj_indices]
+            target_obj_names_2 = [args.model_ids[i] for i in target_obj_indices_2]
+            output_path = os.path.join(f"runs/{run_name}", "eval_target_objects.txt")
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, "w") as f:
+                for i, name in enumerate(target_obj_names):
+                    f.write(f"eval_env_{i}: {name}\n")
+                for i, name in enumerate(target_obj_names_2):
+                    f.write(f"eval_env_{i}: {name}\n")
+            print(f"Saved eval target objects to {output_path}")
             # --- End of debugging code ---
 
             eval_metrics = defaultdict(list)
@@ -584,6 +582,10 @@ if __name__ == "__main__":
         if args.save_model and iteration % args.eval_freq == 1:
             model_path = f"runs/{run_name}/ckpt_latest.pt"
             # torch.save(agent.state_dict(), model_path)
+            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
+            print(f"model saved to {model_path}")
+        if args.save_model and iteration % args.checkpoint_freq == 0:
+            model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
             torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
             print(f"model saved to {model_path}")
         # Annealing the rate if instructed to do so.

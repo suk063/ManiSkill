@@ -95,7 +95,7 @@ parser.add_argument(
 parser.add_argument(
     "--epochs",
     type=int,
-    default=10,
+    default=20,
     help="Number of training epochs per environment."
 )
 parser.add_argument(
@@ -171,7 +171,7 @@ OPT_LR = 1e-3
 #  Scene bounds (should match map_table.py)                                   #
 # --------------------------------------------------------------------------- #
 SCENE_MIN = (-0.8, -1.0, -0.3)
-SCENE_MAX = (0.4,  1.0,  0.3)
+SCENE_MAX = (0.4,  1.0,  0.5)
 
 # --------------------------------------------------------------------------- #
 #  Helper functions                                                           #

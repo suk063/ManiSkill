@@ -20,8 +20,8 @@ from .pick_ycb_sequential import PickYCBSequentialEnv
 @register_env("PickYCBCustomNoRobot-v1", max_episode_steps=50)
 class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
     
-    def __init__(self, *args, grid_dim: int = 15, **kwargs):
-        super().__init__(*args, grid_dim=grid_dim, robot_uids=[], robot_init_qpos_noise=0.0, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, robot_uids=[], robot_init_qpos_noise=0.0, **kwargs)
 
     @property
     def _default_sensor_configs(self) -> List[CameraConfig]:
