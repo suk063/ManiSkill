@@ -62,6 +62,27 @@ class PickYCBSequentialEnv(BaseEnv):
         # self.robot_cumulative_force_limit = 5000
         # self.robot_force_mult = 0.001
         # self.robot_force_penalty_min = 0.2 
+        
+        # These are for clutter environment where all the objects will appear in all parallel environment
+        self.clutter_objects = []
+        self.clutter_model_ids = [
+            "002_master_chef_can", "003_cracker_box", "004_sugar_box",
+            "006_mustard_bottle", "007_tuna_fish_can", "024_bowl", "025_mug",
+            "015_peach", "008_pudding_box", "051_large_clamp"
+        ]
+        
+        self.clutter_poses = [
+            sapien.Pose(p=[-0.15, -0.4, 0.05]),
+            sapien.Pose(p=[0.0, -0.45, 0.1085]),
+            sapien.Pose(p=[-0.21, 0.55, 0.0888]),
+            sapien.Pose(p=[-0.12, 0.65, 0.1945 / 2.0]),
+            sapien.Pose(p=[-0.23, -0.6, 0.013]),
+            sapien.Pose(p=[-0.33, -0.65, 0.028]),
+            sapien.Pose(p=[-0.27, 0.65, 0.04]),
+            sapien.Pose(p=[0.1, -0.25, 0.0296]),
+            sapien.Pose(p=[-0.29, 0.25, 0.015]),
+            sapien.Pose(p=[0.08, 0.4, 0.019]),
+        ]
 
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
@@ -184,6 +205,15 @@ class PickYCBSequentialEnv(BaseEnv):
         self.pick_obj_2 = Actor.merge(pick_objs_2, name="pick_obj_2")
         
         self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        
+        for i, model_id in enumerate(self.clutter_model_ids):
+            builder = actors.get_actor_builder(self.scene, id=f"ycb:{model_id}")
+            
+            # Set the fixed initial pose for this clutter object
+            builder.initial_pose = self.clutter_poses[i]
+
+            clutter_obj = builder.build(name=f"clutter_{model_id}_{i}")
+            self.clutter_objects.append(clutter_obj)
 
     def _initialize_ycb_objects(self, env_idx: torch.Tensor):
         b = len(env_idx)
@@ -396,11 +426,11 @@ class PickYCBSequentialEnv(BaseEnv):
         basket_top_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         basket_top_pos[:, 2] = basket_top_pos[:, 2] + 2 * self.basket_half_size
 
-        basket_inside_pos = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
-        basket_inside_pos[:, 2] = basket_inside_pos[:, 2] + 0.03  # add 3cm to the basket bottom z
+        basket_inside_pos_1 = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
+        basket_inside_pos_1[:, 2] = basket_inside_pos_1[:, 2] + self.env_target_obj_half_height_1 + 0.01
 
         basket_top_target = basket_top_pos.clone()
-        basket_top_target[:, 2] += 0.03  # slightly above the rim to encourage clearing the edge
+        basket_top_target[:, 2] += 0.05  # slightly above the rim to encourage clearing the edge
 
         target_qpos = torch.tensor([0, 0.22, -1.23, 0, 1.01, 0, 0, 0, 0, 0, 0, 0]).to(self.device)
 
@@ -442,7 +472,7 @@ class PickYCBSequentialEnv(BaseEnv):
         reward = update_max(reward, lifted_1, cand)
 
         # 5. Enter basket
-        obj_to_basket_inside_dist_1 = torch.linalg.norm(basket_inside_pos - obj_pos_1, dim=1)
+        obj_to_basket_inside_dist_1 = torch.linalg.norm(basket_inside_pos_1 - obj_pos_1, dim=1)
         reach_inside_basket_reward_1 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_1)
         cand = 8.0 + reach_inside_basket_reward_1
         reward = update_max(reward, info["is_entering_basket_obj_1"], cand)
@@ -506,7 +536,9 @@ class PickYCBSequentialEnv(BaseEnv):
             reward = update_max(reward, lifted_2, cand)
 
             # 5. Enter basket for O2
-            obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos - obj_pos_2, dim=1)
+            basket_inside_pos_2 = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
+            basket_inside_pos_2[:, 2] = basket_inside_pos_2[:, 2] + self.env_target_obj_half_height_2 + 0.01
+            obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos_2 - obj_pos_2, dim=1)
             reach_inside_basket_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_2)
             mask_e2 = mask_prog1 & info["is_entering_basket_obj_2"]
             cand = 20.0 + reach_inside_basket_reward_2
