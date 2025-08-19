@@ -35,7 +35,7 @@ run_cfg() {
     "$@"
 }
 
-run_cfg cnn-map-local-fusion \
+run_cfg dino-map-local-fusion \
   --use_map \
   --use_local_fusion \
   --vision_encoder=dino \
