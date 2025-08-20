@@ -452,7 +452,7 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_to_tcp_dist_1 = torch.linalg.norm(tcp_pose - obj_pos_1, dim=1)
 
         # 1. Reach reward (dense)
-        reward = 2.0 * (1.0 - torch.tanh(3.0 * obj_to_tcp_dist_1))
+        reward = 2.0 * (1.0 - torch.tanh(2.0 * obj_to_tcp_dist_1))
 
         # 2. Grasp reward
         is_grasped_1 = info["is_grasped_obj_1"]
@@ -467,13 +467,13 @@ class PickYCBSequentialEnv(BaseEnv):
 
         # 4. Approach basket top (while grasped)
         obj_to_basket_top_dist_1 = torch.linalg.norm(basket_top_target - obj_pos_1, dim=1)
-        reach_basket_top_reward_1 = 1.0 - torch.tanh(3.0 * obj_to_basket_top_dist_1)
+        reach_basket_top_reward_1 = 1.0 - torch.tanh(2.0 * obj_to_basket_top_dist_1)
         cand = 5.0 + 3.0 * reach_basket_top_reward_1
         reward = update_max(reward, lifted_1, cand)
 
         # 5. Enter basket
         obj_to_basket_inside_dist_1 = torch.linalg.norm(basket_inside_pos_1 - obj_pos_1, dim=1)
-        reach_inside_basket_reward_1 = 1.0 - torch.tanh(3.0 * obj_to_basket_inside_dist_1)
+        reach_inside_basket_reward_1 = 1.0 - torch.tanh(2.0 * obj_to_basket_inside_dist_1)
         cand = 8.0 + reach_inside_basket_reward_1
         reward = update_max(reward, info["is_entering_basket_obj_1"], cand)
 
@@ -512,7 +512,7 @@ class PickYCBSequentialEnv(BaseEnv):
         if mask_prog1.any():
             obj_pos_2 = self.pick_obj_2.pose.p
             obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
-            reach_obj_2_reward = 2.0 * (1.0 - torch.tanh(3.0 * obj_to_tcp_dist_2))
+            reach_obj_2_reward = 2.0 * (1.0 - torch.tanh(2.0 * obj_to_tcp_dist_2))
 
             # 1. Reach object 2 (dense) - now gated by return to start
             cand = 12.0 + reach_obj_2_reward
@@ -531,7 +531,7 @@ class PickYCBSequentialEnv(BaseEnv):
 
             # 4. Approach basket top for O2 (while grasped)
             obj_to_basket_top_dist_2 = torch.linalg.norm(basket_top_target - obj_pos_2, dim=1)
-            reach_basket_top_reward_2 = 1.0 - torch.tanh(3.0 * obj_to_basket_top_dist_2)
+            reach_basket_top_reward_2 = 1.0 - torch.tanh(2.0 * obj_to_basket_top_dist_2)
             cand = 17.0 + 3.0 * reach_basket_top_reward_2
             reward = update_max(reward, lifted_2, cand)
 
@@ -539,7 +539,7 @@ class PickYCBSequentialEnv(BaseEnv):
             basket_inside_pos_2 = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
             basket_inside_pos_2[:, 2] = basket_inside_pos_2[:, 2] + self.env_target_obj_half_height_2 + 0.01
             obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos_2 - obj_pos_2, dim=1)
-            reach_inside_basket_reward_2 = 1.0 - torch.tanh(3.0 * obj_to_basket_inside_dist_2)
+            reach_inside_basket_reward_2 = 1.0 - torch.tanh(2.0 * obj_to_basket_inside_dist_2)
             mask_e2 = mask_prog1 & info["is_entering_basket_obj_2"]
             cand = 20.0 + reach_inside_basket_reward_2
             reward = update_max(reward, mask_e2, cand)
@@ -563,7 +563,7 @@ class PickYCBSequentialEnv(BaseEnv):
         robot_static_reward = 1.0 - torch.tanh(5.0 * robot_qvel)
 
         tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - basket_top_target, dim=1)
-        reach_basket_top_reward = 1.0 - torch.tanh(3.0 * tcp_to_basket_top_dist)
+        reach_basket_top_reward = 1.0 - torch.tanh(2.0 * tcp_to_basket_top_dist)
 
         final_state = (
             (prev_stage1_done | info["success_obj_1"])
