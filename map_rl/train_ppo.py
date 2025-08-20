@@ -216,35 +216,23 @@ if __name__ == "__main__":
     args.device = device
 
     # --- Load CLIP model for text and online mapping ---
-    print("--- Loading CLIP model ---")
-    clip_model_name = "EVA02-L-14"
-    clip_weights_id = "merged2b_s4b_b131k"
-    clip_model, _, _ = open_clip.create_model_and_transforms(
-        clip_model_name, pretrained=clip_weights_id
-    )
-    clip_model = clip_model.to(device)
-    
-    # --- Generate text embeddings for model_ids ---
-    text_input = [f"pick up the {s.replace('_', ' ')}" for s in args.model_ids]
-    tokenizer = open_clip.get_tokenizer(clip_model_name)
-    text_tokens = tokenizer(text_input).to(device)
-    with torch.no_grad():
-        text_embeddings = clip_model.encode_text(text_tokens)
-        text_embeddings = F.normalize(text_embeddings, dim=-1, p=2)
-    print("--- Text embeddings generated ---")
-
-    # Add camera_uids to args to be accessed by mapping functions
-    args.camera_uids = args.camera_uids
-
+    clip_model = None
     if args.use_online_mapping:
-        print("--- Setting CLIP model for online mapping ---")
+        print("--- Loading CLIP model for online mapping ---")
+        clip_model_name = "EVA02-L-14"
+        clip_weights_id = "merged2b_s4b_b131k"
+        clip_model, _, _ = open_clip.create_model_and_transforms(
+            clip_model_name, pretrained=clip_weights_id
+        )
+        clip_model = clip_model.to(device)
         clip_model.eval()
         for param in clip_model.parameters():
             param.requires_grad = False
     else:
-        del clip_model, tokenizer
-        clip_model = None
-        print("--- CLIP model removed from memory ---")
+        print("--- CLIP model not loaded as online mapping is disabled ---")
+
+    # Add camera_uids to args to be accessed by mapping functions
+    args.camera_uids = args.camera_uids
 
     # --- Load Maps and Decoder ---
     # Always define total number of discrete environments
@@ -427,7 +415,7 @@ if __name__ == "__main__":
         decoder=decoder if args.use_map else None, 
         use_local_fusion=args.use_local_fusion, 
         vision_encoder=args.vision_encoder,
-        text_embeddings=text_embeddings,
+        num_tasks=len(args.model_ids),
         camera_uids=args.camera_uids,
     ).to(device)
     # Use differential learning rates for DINO backbone vs. the rest
@@ -436,18 +424,17 @@ if __name__ == "__main__":
             dino_backbone_params = list(agent.feature_net.vision_encoder.backbone.parameters())
             dino_backbone_param_ids = set(map(id, dino_backbone_params))
             other_params = [p for p in agent.parameters() if id(p) not in dino_backbone_param_ids]
-            optimizer = optim.AdamW(
+            optimizer = optim.Adam(
                 [
-                    {"params": dino_backbone_params, "lr": 1e-5},
                     {"params": other_params, "lr": args.learning_rate},
                 ],
                 eps=1e-5,
             )
         except AttributeError:
             # Fallback in case the backbone structure changes
-            optimizer = optim.AdamW(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+            optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     else:
-        optimizer = optim.AdamW(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+        optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     # KL penalty coefficient (adaptive)
     kl_coef = args.kl_coef
 
