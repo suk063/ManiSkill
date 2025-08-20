@@ -144,6 +144,8 @@ class Args:
     """Scale the reward by this factor"""
     eval_freq: int = 25
     """evaluation frequency in terms of iterations"""
+    checkpoint_freq: int = 100
+    """checkpoint saving frequency in terms of iterations"""
     save_train_video_freq: Optional[int] = None
     """frequency to save training videos in terms of iterations"""
     finite_horizon_gae: bool = False
@@ -584,6 +586,10 @@ if __name__ == "__main__":
         if args.save_model and iteration % args.eval_freq == 1:
             model_path = f"runs/{run_name}/ckpt_latest.pt"
             # torch.save(agent.state_dict(), model_path)
+            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
+            print(f"model saved to {model_path}")
+        if args.save_model and iteration % args.checkpoint_freq == 0:
+            model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
             torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
             print(f"model saved to {model_path}")
         # Annealing the rate if instructed to do so.
