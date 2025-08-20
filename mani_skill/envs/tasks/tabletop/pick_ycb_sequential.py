@@ -20,7 +20,7 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-@register_env("PickYCBSequential-v1", max_episode_steps=300)
+@register_env("PickYCBSequential-v1", max_episode_steps=500)
 class PickYCBSequentialEnv(BaseEnv):
 
     SUPPORTED_ROBOTS = [
@@ -431,8 +431,6 @@ class PickYCBSequentialEnv(BaseEnv):
 
         basket_top_target = basket_top_pos.clone()
         basket_top_target[:, 2] += 0.05  # slightly above the rim to encourage clearing the edge
-
-        target_qpos = torch.tensor([0, 0.22, -1.23, 0, 1.01, 0, 0, 0, 0, 0, 0, 0]).to(self.device)
 
         prev_stage1_done = info["prev_stage1_done"]
  

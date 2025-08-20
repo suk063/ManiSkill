@@ -58,3 +58,5 @@ output.log
 run_scripts/
 pretrained/
 playground/
+
+dinov3/
