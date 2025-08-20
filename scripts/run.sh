@@ -35,10 +35,10 @@ run_cfg() {
     "$@"
 }
 
-run_cfg cnn-map-local-fusion-hand-cam  \
+run_cfg dino-map-local-fusion-hand-cam  \
   --use_map \
   --use_local_fusion \
-  --vision_encoder=plain_cnn \
+  --vision_encoder=dino \
   --map_start_iteration=10000000 \
   --camera_uids=hand_camera \
   # --checkpoint=pretrained/ckpt_latest.pt \
