@@ -35,7 +35,7 @@ run_cfg() {
     "$@"
 }
 
-run_cfg dino-map-local-fusion-hand-cam  \
+run_cfg dino-map-local-fusion-base-cam  \
   --use_map \
   --use_local_fusion \
   --vision_encoder=dino \
