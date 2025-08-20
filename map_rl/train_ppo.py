@@ -511,18 +511,18 @@ if __name__ == "__main__":
                 eval_map_optimizer = None
 
             # (NOTE): debugging code to save target objects ---
-            # target_obj_indices = eval_infos['env_target_obj_idx_1'].cpu().numpy()
-            # target_obj_indices_2 = eval_infos['env_target_obj_idx_2'].cpu().numpy()
-            # target_obj_names = [args.model_ids[i] for i in target_obj_indices]
-            # target_obj_names_2 = [args.model_ids[i] for i in target_obj_indices_2]
-            # output_path = os.path.join(f"runs/{run_name}", "eval_target_objects.txt")
-            # os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            # with open(output_path, "w") as f:
-            #     for i, name in enumerate(target_obj_names):
-            #         f.write(f"eval_env_{i}: {name}\n")
-            #     for i, name in enumerate(target_obj_names_2):
-            #         f.write(f"eval_env_{i}: {name}\n")
-            # print(f"Saved eval target objects to {output_path}")
+            target_obj_indices = eval_infos['env_target_obj_idx_1'].cpu().numpy()
+            target_obj_indices_2 = eval_infos['env_target_obj_idx_2'].cpu().numpy()
+            target_obj_names = [args.model_ids[i] for i in target_obj_indices]
+            target_obj_names_2 = [args.model_ids[i] for i in target_obj_indices_2]
+            output_path = os.path.join(f"runs/{run_name}", "eval_target_objects.txt")
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, "w") as f:
+                for i, name in enumerate(target_obj_names):
+                    f.write(f"eval_env_{i}: {name}\n")
+                for i, name in enumerate(target_obj_names_2):
+                    f.write(f"eval_env_{i}: {name}\n")
+            print(f"Saved eval target objects to {output_path}")
             # --- End of debugging code ---
 
             eval_metrics = defaultdict(list)

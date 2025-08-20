@@ -34,7 +34,7 @@ class PickYCBSequentialEnv(BaseEnv):
     sensor_cam_target_pos = [-0.1, 0, 0.1]
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
-    model_ids = ["005_tomato_soup_can", "009_gelatin_box", "014_lemon", "013_apple", "011_banana"]
+    model_ids = ["013_apple", "014_lemon", "005_tomato_soup_can", "009_gelatin_box", "011_banana"]
     obj_half_size = 0.025
     basket_half_size = 0.132 / 2 # 44.2964 (original_size) * 0.003 (scale) / 2.0
     basket_pos_offset = torch.tensor([0, 0, 0.1135])
@@ -181,24 +181,24 @@ class PickYCBSequentialEnv(BaseEnv):
         self.env_target_obj_half_height_1 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self.env_target_obj_half_height_2 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
 
-        model_id_1 = "013_apple"
-        model_id_2 = "014_lemon"
-
-        obj_idx_1 = self.model_ids.index(model_id_1)
-        obj_idx_2 = self.model_ids.index(model_id_2)
-
-        half_height_1 = self.ycb_half_heights_m[model_id_1]
-        half_height_2 = self.ycb_half_heights_m[model_id_2]
+        # model_id_1 = "013_apple"
+        # model_id_2 = "014_lemon"
 
         for i in range(self.num_envs):
-            self.env_target_obj_idx_1[i] = obj_idx_1
+            obj_idx_1 = i % len(self.model_ids)  # Which object type this environment should pick
+            model_id_1 = self.model_ids[obj_idx_1]
+            half_height_1 = self.ycb_half_heights_m[model_id_1]
             self.env_target_obj_half_height_1[i] = half_height_1
-            env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]
+            env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]  # Get the YCB object of that type from this environment
+            self.env_target_obj_idx_1[i] = obj_idx_1  # Save the target object index for this environment to be used in the observation
             pick_objs_1.append(env_ycb_obj_1)
-            
-            self.env_target_obj_idx_2[i] = obj_idx_2
+
+            obj_idx_2 = (i + 1) % len(self.model_ids)  # Which object type this environment should pick
+            model_id_2 = self.model_ids[obj_idx_2]
+            half_height_2 = self.ycb_half_heights_m[model_id_2]
             self.env_target_obj_half_height_2[i] = half_height_2
-            env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]
+            env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]  # Get the YCB object of that type from this environment
+            self.env_target_obj_idx_2[i] = obj_idx_2  # Save the target object index for this environment to be used in the observation
             pick_objs_2.append(env_ycb_obj_2)
         
         self.pick_obj_1 = Actor.merge(pick_objs_1, name="pick_obj_1")
