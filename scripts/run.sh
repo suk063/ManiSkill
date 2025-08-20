@@ -16,10 +16,8 @@ COMMON_ARGS=(
   --total_timesteps=100_000_000
   --num_steps=500
   --num_eval_steps=500
-  --gamma=0.99
-  --gae_lambda=0.95
-  --update_epochs=8
-  --learning_rate=3e-4
+  --gamma=0.8
+  --learning_rate=5e-4
   --capture-video
   --track
   --wandb_project_name "PPO-RL-Map"
