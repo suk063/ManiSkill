@@ -332,19 +332,21 @@ class PickYCBSequentialEnv(BaseEnv):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
         obs = dict(
             # env_target_obj_idx=self.env_target_obj_idx,
-            is_grasped_obj_1=info["is_grasped_obj_1"],
-            is_grasped_obj_2=info["is_grasped_obj_2"],
+            # is_grasped_obj_1=info["is_grasped_obj_1"],
+            # is_grasped_obj_2=info["is_grasped_obj_2"],
+            is_grasp=info["is_grasped_obj_1"] | info["is_grasped_obj_2"],
             # tcp_pose=self.agent.tcp.pose.raw_pose,
             # basket_pos=self.basket.pose.p,
         )
-        if "state" in self.obs_mode:
-            obs.update(
-                # obj_pose=self.pick_obj.pose.raw_pose,
-                # tcp_to_obj1_pos=self.pick_obj_1.pose.p - self.agent.tcp.pose.p,
-                # tcp_to_obj2_pos=self.pick_obj_2.pose.p - self.agent.tcp.pose.p,
-                # obj1_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_1.pose.p,
-                # obj2_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_2.pose.p,
-            )
+        
+        # if "state" in self.obs_mode:
+        #     obs.update(
+        #         # obj_pose=self.pick_obj.pose.raw_pose,
+        #         # tcp_to_obj1_pos=self.pick_obj_1.pose.p - self.agent.tcp.pose.p,
+        #         # tcp_to_obj2_pos=self.pick_obj_2.pose.p - self.agent.tcp.pose.p,
+        #         # obj1_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_1.pose.p,
+        #         # obj2_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_2.pose.p,
+        #     )
         return obs
 
     def evaluate(self):
