@@ -79,7 +79,7 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 400
+    num_envs: int = 100
     """the number of parallel environments"""
     num_eval_envs: int = 20
     """the number of parallel evaluation environments"""
@@ -155,7 +155,7 @@ class Args:
     model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "005_tomato_soup_can", "009_gelatin_box", "011_banana"])
 
     # Environment discretisation
-    grid_dim: int = 10
+    total_envs: int = 100
     """Number of cells per axis used for discrete initialisation (N×N grid)."""
 
     # Map-related arguments
@@ -236,7 +236,7 @@ if __name__ == "__main__":
 
     # --- Load Maps and Decoder ---
     # Always define total number of discrete environments
-    total_envs = args.grid_dim ** 2
+    total_envs = args.total_envs
     # Placeholders for map-related variables to avoid NameError when use_map is False
     all_grids = None
     grid_sampler = None
@@ -270,7 +270,7 @@ if __name__ == "__main__":
             exit()
 
         # 2. Load ALL grids (grid_dim²) and build sampling helper
-        total_envs = args.grid_dim ** 2
+        total_envs = args.total_envs
         all_grids = []
         if not os.path.exists(args.map_dir):
             print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
@@ -319,8 +319,8 @@ if __name__ == "__main__":
     #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim, camera_uids=args.camera_uids)
-    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", grid_dim=args.grid_dim)
+    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", camera_uids=args.camera_uids)
+    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", total_envs=args.total_envs)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
