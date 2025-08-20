@@ -37,10 +37,10 @@ class XArm6Robotiq(BaseAgent):
             qpos=np.array(
                 [
                     0,
-                    0.5,
-                    -2.8,
-                    0,
-                    2.5,
+                    -0.3,
+                    -1.5,
+                    0,  
+                    1.87,
                     0,
                     0,
                     0,
