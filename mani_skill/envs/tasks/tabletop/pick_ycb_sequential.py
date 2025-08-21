@@ -71,6 +71,8 @@ class PickYCBSequentialEnv(BaseEnv):
             "009_gelatin_box": 0.014,
             "017_orange": 0.036,
             "012_strawberry": 0.021,
+            "019_pitcher_base": 0.235 / 2.0,
+            "016_pear": 0.033
         }
         
         # Define target objects
@@ -86,12 +88,12 @@ class PickYCBSequentialEnv(BaseEnv):
             "002_master_chef_can", "004_sugar_box", "006_mustard_bottle",
             "007_tuna_fish_can", "024_bowl", "025_mug", "015_peach",
             "008_pudding_box", "051_large_clamp", "011_banana",
-            "005_tomato_soup_can", "009_gelatin_box", "017_orange","012_strawberry",
+            "005_tomato_soup_can", "009_gelatin_box", "017_orange","012_strawberry", "019_pitcher_base", "016_pear",
         ]
         clutter_model_xy = [
             [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
             [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
-            [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], [0.12, 0], [-0.15, -0.21]
+            [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], [0.12, 0], [-0.15, -0.21], [-0.44, 0.6], [-0.49, -0.64]
         ]
         self.clutter_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
@@ -458,41 +460,41 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_to_tcp_dist_1 = torch.linalg.norm(tcp_pose - obj_pos_1, dim=1)
 
         # 1. Reach reward (dense)
-        reward = 2.0 * (1.0 - torch.tanh(3.0 * obj_to_tcp_dist_1))
+        reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_1))
 
         # 2. Grasp reward
         is_grasped_1 = info["is_grasped_obj_1"]
-        cand = 4.0
+        cand = 5.0
         reward = update_max(reward, is_grasped_1, cand)
         
         # 3. Lift reward
         obj_bottom_z_1 = obj_pos_1[..., 2] - self.env_target_obj_half_height_1
         lifted_1 = is_grasped_1 & (obj_bottom_z_1 >= 0.01)
-        cand = 5.0
+        cand = 6.0
         reward = update_max(reward, lifted_1, cand)
 
         # 4. Approach basket top (while grasped)
         obj_to_basket_top_dist_1 = torch.linalg.norm(basket_top_target - obj_pos_1, dim=1)
-        reach_basket_top_reward_1 = 1.0 - torch.tanh(3.0 * obj_to_basket_top_dist_1)
-        cand = 5.0 + 3.0 * reach_basket_top_reward_1
+        reach_basket_top_reward_1 = 1.0 - torch.tanh(5.0 * obj_to_basket_top_dist_1)
+        cand = 6.0 + 3.0 * reach_basket_top_reward_1
         reward = update_max(reward, lifted_1, cand)
 
         # 5. Enter basket
         obj_to_basket_inside_dist_1 = torch.linalg.norm(basket_inside_pos_1 - obj_pos_1, dim=1)
-        reach_inside_basket_reward_1 = 1.0 - torch.tanh(3.0 * obj_to_basket_inside_dist_1)
-        cand = 8.0 + reach_inside_basket_reward_1
+        reach_inside_basket_reward_1 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_1)
+        cand = 9.0 + reach_inside_basket_reward_1
         reward = update_max(reward, info["is_entering_basket_obj_1"], cand)
 
         # 6. Place inside basket (ungrasp + static)
         v1 = torch.linalg.norm(self.pick_obj_1.linear_velocity, dim=1)
         av1 = torch.linalg.norm(self.pick_obj_1.angular_velocity, dim=1)
         static_reward_1 = 1.0 - torch.tanh(v1 * 5.0 + av1)
-        cand = 9.0 + static_reward_1
+        cand = 10.0 + static_reward_1
         placed_mask_1 = info["is_placed_in_basket_obj_1"] & ~is_grasped_1
         reward = update_max(reward, placed_mask_1, cand)
 
         # 7. object 1 is placed in basket reward
-        cand = 12.0
+        cand = 13.0
         reward = update_max(reward, info["success_obj_1"], cand)
 
         mask_prog1 = prev_stage1_done | info["success_obj_1"]
@@ -518,48 +520,48 @@ class PickYCBSequentialEnv(BaseEnv):
         if mask_prog1.any():
             obj_pos_2 = self.pick_obj_2.pose.p
             obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
-            reach_obj_2_reward = 2.0 * (1.0 - torch.tanh(3.0 * obj_to_tcp_dist_2))
+            reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2))
 
             # 1. Reach object 2 (dense) - now gated by return to start
-            cand = 12.0 + reach_obj_2_reward
+            cand = 14.0 + reach_obj_2_reward
             reward = update_max(reward, mask_prog1, cand)
 
             # 2. Grasp reward
             is_grasped_2 = mask_prog1 & info["is_grasped_obj_2"]
-            cand = 16.0
+            cand = 18.0
             reward = update_max(reward, is_grasped_2, cand)
 
             # 3. Lift reward
             obj_bottom_z_2 = obj_pos_2[..., 2] - self.env_target_obj_half_height_2
             lifted_2 = is_grasped_2 & (obj_bottom_z_2 >= 0.01)
-            cand = 17.0
+            cand = 19.0
             reward = update_max(reward, lifted_2, cand)
 
             # 4. Approach basket top for O2 (while grasped)
             obj_to_basket_top_dist_2 = torch.linalg.norm(basket_top_target - obj_pos_2, dim=1)
-            reach_basket_top_reward_2 = 1.0 - torch.tanh(3.0 * obj_to_basket_top_dist_2)
-            cand = 17.0 + 3.0 * reach_basket_top_reward_2
+            reach_basket_top_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_top_dist_2)
+            cand = 19.0 + 3.0 * reach_basket_top_reward_2
             reward = update_max(reward, lifted_2, cand)
 
             # 5. Enter basket for O2
             basket_inside_pos_2 = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
             basket_inside_pos_2[:, 2] = basket_inside_pos_2[:, 2] + self.env_target_obj_half_height_2 + 0.01
             obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos_2 - obj_pos_2, dim=1)
-            reach_inside_basket_reward_2 = 1.0 - torch.tanh(3.0 * obj_to_basket_inside_dist_2)
+            reach_inside_basket_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_2)
             mask_e2 = mask_prog1 & info["is_entering_basket_obj_2"]
-            cand = 20.0 + reach_inside_basket_reward_2
+            cand = 22.0 + reach_inside_basket_reward_2
             reward = update_max(reward, mask_e2, cand)
 
             # 6. Place inside basket for O2 (ungrasp + static)
             v2 = torch.linalg.norm(self.pick_obj_2.linear_velocity, dim=1)
             av2 = torch.linalg.norm(self.pick_obj_2.angular_velocity, dim=1)
             static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
-            cand = 21.0 + static_reward_2
+            cand = 23.0 + static_reward_2
             placed_mask_2 = mask_prog1 & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
             reward = update_max(reward, placed_mask_2, cand)
 
             # 7. object 2 is placed in basket reward
-            cand = 24.0
+            cand = 26.0
             reward = update_max(reward, info["success_obj_2"], cand)
 
         # =========================
@@ -569,7 +571,7 @@ class PickYCBSequentialEnv(BaseEnv):
         robot_static_reward = 1.0 - torch.tanh(5.0 * robot_qvel)
 
         tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - basket_top_target, dim=1)
-        reach_basket_top_reward = 1.0 - torch.tanh(3.0 * tcp_to_basket_top_dist)
+        reach_basket_top_reward = 1.0 - torch.tanh(5.0 * tcp_to_basket_top_dist)
 
         final_state = (
             (prev_stage1_done | info["success_obj_1"])
@@ -578,13 +580,13 @@ class PickYCBSequentialEnv(BaseEnv):
             & (~info["is_grasped_obj_2"])
         )
         final_state_reward = robot_static_reward + reach_basket_top_reward
-        cand = 24.0 + final_state_reward
+        cand = 26.0 + final_state_reward
         reward = update_max(reward, final_state, cand)
 
         # =========================
         # Success bonus
         # =========================
-        reward_success = torch.full_like(reward, 28.0)
+        reward_success = torch.full_like(reward, 30.0)
         reward = update_max(reward, info["success"], reward_success)
         return reward
 
@@ -593,4 +595,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 28.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 30.0
