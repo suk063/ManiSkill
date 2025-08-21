@@ -39,5 +39,5 @@ run_cfg dino-map-local-fusion-base-cam-2-stage-finetune  \
   --vision_encoder=dino \
   --map_start_iteration=10000000 \
   --camera_uids=base_camera \
-  --freeze_dino_backbone=False \
+  --no-freeze-dino-backbone \
   # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-hand-cam/ckpt_latest.pt \
