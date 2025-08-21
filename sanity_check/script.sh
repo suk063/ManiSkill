@@ -12,7 +12,7 @@ python sanity_check/ppo_state.py \
     --learning_rate=3e-4 \
     --capture-video \
     --track \
-    --wandb_project_name "PPO-RL-Map"
+    --wandb_project_name "PPO-RL-Map" 
 
 
 # python sanity_check/ppo_rgb.py \

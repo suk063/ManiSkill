@@ -300,6 +300,7 @@ if __name__ == "__main__":
         agent.eval()
         if iteration % args.eval_freq == 1:
             print("Evaluating")
+            torch.manual_seed(args.seed) # Reset seed before evaluation
             eval_obs, _ = eval_envs.reset(options={"global_idx": eval_indices.tolist()})
             eval_metrics = defaultdict(list)
             num_episodes = 0
