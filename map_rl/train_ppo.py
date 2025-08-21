@@ -165,9 +165,9 @@ class Args:
     """if toggled, use the local fusion of the image and map features"""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
-    map_dir: str = "mapping/multi_env_maps_cube"
+    map_dir: str = "mapping/multi_env_maps"
     """Directory where the trained environment maps are stored."""
-    decoder_path: str = "mapping/multi_env_maps_cube/shared_decoder.pt"
+    decoder_path: str = "mapping/multi_env_maps/shared_decoder.pt"
     """Path to the trained shared decoder model."""
 
     # Online mapping arguments
