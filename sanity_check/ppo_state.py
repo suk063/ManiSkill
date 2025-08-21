@@ -71,6 +71,8 @@ class Args:
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
+    total_envs: int = 200
+    """Total number of discrete environments available for sampling with global_idx"""
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.8
@@ -159,6 +161,19 @@ class Agent(nn.Module):
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+
+
+class GridSampler:
+    def __init__(self, items, batch_size, seed: Optional[int] = None):
+        self.items = list(items)
+        self.total = len(self.items)
+        self.batch_size = int(batch_size)
+        self._rng = np.random.RandomState(seed)
+
+    def sample(self):
+        assert self.batch_size <= self.total, "Batch size must be <= total items in GridSampler"
+        indices = self._rng.choice(self.total, self.batch_size, replace=False)
+        return indices, None
 
 class Logger:
     def __init__(self, log_wandb=False, tensorboard: SummaryWriter = None) -> None:
@@ -255,8 +270,14 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, _ = envs.reset(seed=args.seed)
-    eval_obs, _ = eval_envs.reset(seed=args.seed)
+    # Create samplers for train/eval subsets of global envs and do initial resets with global_idx
+    batch_train_envs = args.num_envs if not args.evaluate else 1
+    grid_sampler = GridSampler(range(args.total_envs), batch_train_envs, seed=args.seed)
+    rng_eval = np.random.RandomState(args.seed + 123)
+    eval_indices = rng_eval.choice(args.total_envs, args.num_eval_envs, replace=False)
+    active_indices, _ = grid_sampler.sample()
+    next_obs, _ = envs.reset(seed=args.seed, options={"global_idx": active_indices.tolist()})
+    eval_obs, _ = eval_envs.reset(seed=args.seed, options={"global_idx": eval_indices.tolist()})
     next_done = torch.zeros(args.num_envs, device=device)
     print(f"####")
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
@@ -270,12 +291,16 @@ if __name__ == "__main__":
         agent.load_state_dict(torch.load(args.checkpoint))
 
     for iteration in range(1, args.num_iterations + 1):
+        # Resample training subset each iteration and reset with global_idx
+        active_indices, _ = grid_sampler.sample()
+        next_obs, _ = envs.reset(options={"global_idx": active_indices.tolist()})
+        next_done = torch.zeros(args.num_envs, device=device)
         print(f"Epoch: {iteration}, global_step={global_step}")
         final_values = torch.zeros((args.num_steps, args.num_envs), device=device)
         agent.eval()
         if iteration % args.eval_freq == 1:
             print("Evaluating")
-            eval_obs, _ = eval_envs.reset()
+            eval_obs, _ = eval_envs.reset(options={"global_idx": eval_indices.tolist()})
             eval_metrics = defaultdict(list)
             num_episodes = 0
             for _ in range(args.num_eval_steps):
