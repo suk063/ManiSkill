@@ -155,8 +155,8 @@ class Args:
     model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "005_tomato_soup_can", "009_gelatin_box", "011_banana"])
 
     # Environment discretisation
-    total_envs: int = 100
-    """Number of cells per axis used for discrete initialisation (N×N grid)."""
+    total_envs: int = 200
+    """Number of cells per axis used for discrete initialisation."""
 
     # Map-related arguments
     use_map: bool = False
@@ -426,6 +426,7 @@ if __name__ == "__main__":
             other_params = [p for p in agent.parameters() if id(p) not in dino_backbone_param_ids]
             optimizer = optim.Adam(
                 [
+                    {"params": dino_backbone_params, "lr": 1e-5},
                     {"params": other_params, "lr": args.learning_rate},
                 ],
                 eps=1e-5,

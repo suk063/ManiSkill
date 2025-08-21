@@ -190,14 +190,23 @@ class PickYCBSequentialEnv(BaseEnv):
         half_height_2 = self.ycb_half_heights_m[model_id_2]
 
         for i in range(self.num_envs):
-            self.env_target_obj_idx_1[i] = obj_idx_1
-            self.env_target_obj_half_height_1[i] = half_height_1
-            env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]
+            # Even env_idx: apple -> obj_idx_1, lemon -> obj_idx_2
+            # Odd env_idx:  lemon -> obj_idx_1, apple -> obj_idx_2
+            if i % 2 == 0:
+                idx1, idx2 = obj_idx_1, obj_idx_2
+                h1, h2 = half_height_1, half_height_2
+            else:
+                idx1, idx2 = obj_idx_2, obj_idx_1
+                h1, h2 = half_height_2, half_height_1
+
+            self.env_target_obj_idx_1[i] = idx1
+            self.env_target_obj_half_height_1[i] = h1
+            env_ycb_obj_1 = all_ycb_objects[i][idx1]
             pick_objs_1.append(env_ycb_obj_1)
-            
-            self.env_target_obj_idx_2[i] = obj_idx_2
-            self.env_target_obj_half_height_2[i] = half_height_2
-            env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]
+
+            self.env_target_obj_idx_2[i] = idx2
+            self.env_target_obj_half_height_2[i] = h2
+            env_ycb_obj_2 = all_ycb_objects[i][idx2]
             pick_objs_2.append(env_ycb_obj_2)
         
         self.pick_obj_1 = Actor.merge(pick_objs_1, name="pick_obj_1")
@@ -225,14 +234,14 @@ class PickYCBSequentialEnv(BaseEnv):
         circle_center_x = -0.2 + self.scene_x_offset  # Center of YCB area
         circle_center_y = 0.0 + self.scene_y_offset
         
-        # 2 radii × 10 orderings × 5 angles = 100 unique arrangements
-        radii = torch.tensor([0.25, 0.28], device=self.device)  # Two different circle sizes
+        # 4 radii × 10 orderings × 5 angles = 200 unique arrangements
+        radii = torch.tensor([0.25, 0.26, 0.27, 0.28], device=self.device)  # Four different circle sizes
         num_radii = len(radii)
         num_orderings = 10
         num_angles = 5
         
         # Vectorized parameter computation
-        radius_idx = env_idx // (num_orderings * num_angles)  # 0 or 1
+        radius_idx = (env_idx // (num_orderings * num_angles)) % num_radii  # 0..3
         ordering_idx = (env_idx % (num_orderings * num_angles)) // num_angles  # 0-9
         angle_idx = env_idx % num_angles  # 0-4
         

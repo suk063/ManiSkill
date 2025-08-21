@@ -16,7 +16,7 @@ COMMON_ARGS=(
   --total_timesteps=100_000_000
   --num_steps=500
   --num_eval_steps=500
-  --gamma=0.8
+  --gamma=0.9
   --learning_rate=5e-4
   --capture-video
   --track
@@ -33,10 +33,10 @@ run_cfg() {
     "$@"
 }
 
-run_cfg dino-map-local-fusion-hand-cam  \
+run_cfg dino-map-local-fusion-base-cam  \
   --use_map \
   --use_local_fusion \
   --vision_encoder=dino \
-  --map_start_iteration=10000000 \
-  --camera_uids=hand_camera \
+  --map_start_iteration=50000000 \
+  --camera_uids=base_camera \
   # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-hand-cam/ckpt_latest.pt \
