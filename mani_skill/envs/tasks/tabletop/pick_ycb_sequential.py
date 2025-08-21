@@ -11,6 +11,7 @@ from mani_skill.sensors.camera import CameraConfig
 
 from mani_skill.utils import sapien_utils
 from mani_skill.utils.building import actors
+from mani_skill.utils.geometry.rotation_conversions import quaternion_multiply
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs.pose import Pose
@@ -34,8 +35,7 @@ class PickYCBSequentialEnv(BaseEnv):
     sensor_cam_target_pos = [-0.1, 0, 0.1]
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
-    model_ids = ["013_apple", "014_lemon", "005_tomato_soup_can", "009_gelatin_box", "011_banana"]
-    obj_half_size = 0.025
+    
     basket_half_size = 0.132 / 2 # 44.2964 (original_size) * 0.003 (scale) / 2.0
     basket_pos_offset = torch.tensor([0, 0, 0.1135])
 
@@ -46,16 +46,6 @@ class PickYCBSequentialEnv(BaseEnv):
         self.camera_uids = camera_uids
         # self.init_obj_orientations = {}
 
-        self.ycb_half_heights_m = {
-            "005_tomato_soup_can": 0.101 / 2.0,
-            "006_mustard_bottle":  0.175 / 2.0,
-            "009_gelatin_box":     0.028 / 2.0,
-            "011_banana":          0.036 / 2.0,
-            "013_apple":           0.07 / 2.0,
-            "014_lemon":           0.05 / 2.0,
-            "024_bowl":            0.053 / 2.0,
-        }
-
         self.spawn_z_clearance = 0.001
 
         # self.robot_cumulative_force_limit = 5000
@@ -63,25 +53,54 @@ class PickYCBSequentialEnv(BaseEnv):
         # self.robot_force_penalty_min = 0.2 
         
         # These are for clutter environment where all the objects will appear in all parallel environment
-        self.clutter_objects = []
+        
+        self.object_heights = {
+            "013_apple": 0.035,
+            "014_lemon": 0.025,
+            "002_master_chef_can": 0.05,
+            "004_sugar_box": 0.0888,
+            "006_mustard_bottle": 0.1945 / 2.0,
+            "007_tuna_fish_can": 0.013,
+            "024_bowl": 0.028,
+            "025_mug": 0.04,
+            "015_peach": 0.0296,
+            "008_pudding_box": 0.015,
+            "051_large_clamp": 0.019,
+            "011_banana": 0.036,
+            "005_tomato_soup_can": 0.05,
+            "009_gelatin_box": 0.014,
+        }
+        
+        # Define target objects
+        self.target_model_ids = ["013_apple", "014_lemon"]
+        target_model_xy = [[0.04, -0.1], [0.04, 0.1]]
+        self.target_model_poses = [
+            sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
+            for model_id, xy in zip(self.target_model_ids, target_model_xy)
+        ]
+
+        # Define clutter objects
         self.clutter_model_ids = [
-            "002_master_chef_can", "003_cracker_box", "004_sugar_box",
-            "006_mustard_bottle", "007_tuna_fish_can", "024_bowl", "025_mug",
-            "015_peach", "008_pudding_box", "051_large_clamp"
+            "002_master_chef_can", "004_sugar_box", "006_mustard_bottle",
+            "007_tuna_fish_can", "024_bowl", "025_mug", "015_peach",
+            "008_pudding_box", "051_large_clamp", "011_banana",
+            "005_tomato_soup_can", "009_gelatin_box",
+        ]
+        clutter_model_xy = [
+            [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
+            [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
+            [0.0, 0.52], [-0.087, -0.35], [-0.04, 0], [-0.1, 0.25],
+        ]
+        self.clutter_model_poses = [
+            sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
+            for model_id, xy in zip(self.clutter_model_ids, clutter_model_xy)
         ]
         
-        self.clutter_poses = [
-            sapien.Pose(p=[-0.15, -0.4, 0.05]),
-            sapien.Pose(p=[0.0, -0.45, 0.1085]),
-            sapien.Pose(p=[-0.21, 0.55, 0.0888]),
-            sapien.Pose(p=[-0.12, 0.65, 0.1945 / 2.0]),
-            sapien.Pose(p=[-0.23, -0.6, 0.013]),
-            sapien.Pose(p=[-0.33, -0.65, 0.028]),
-            sapien.Pose(p=[-0.27, 0.65, 0.04]),
-            sapien.Pose(p=[0.1, -0.25, 0.0296]),
-            sapien.Pose(p=[-0.29, 0.25, 0.015]),
-            sapien.Pose(p=[0.08, 0.4, 0.019]),
-        ]
+        # Combine them for spawning
+        self.model_ids = self.target_model_ids + self.clutter_model_ids
+        self.model_poses = self.target_model_poses + self.clutter_model_poses
+
+        # target object poses (-0.4, 0.17), (-0.43, -0.15)
 
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
@@ -186,8 +205,8 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_idx_1 = self.model_ids.index(model_id_1)
         obj_idx_2 = self.model_ids.index(model_id_2)
 
-        half_height_1 = self.ycb_half_heights_m[model_id_1]
-        half_height_2 = self.ycb_half_heights_m[model_id_2]
+        half_height_1 = float(self.model_poses[obj_idx_1].p[2])
+        half_height_2 = float(self.model_poses[obj_idx_2].p[2])
 
         for i in range(self.num_envs):
             self.env_target_obj_idx_1[i] = obj_idx_1
@@ -205,33 +224,10 @@ class PickYCBSequentialEnv(BaseEnv):
         
         self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         
-        for i, model_id in enumerate(self.clutter_model_ids):
-            builder = actors.get_actor_builder(self.scene, id=f"ycb:{model_id}")
-            
-            # Set the fixed initial pose for this clutter object
-            builder.initial_pose = self.clutter_poses[i]
-
-            clutter_obj = builder.build(name=f"clutter_{model_id}_{i}")
-            self.clutter_objects.append(clutter_obj)
-
     def _initialize_ycb_objects(self, env_idx: torch.Tensor, options: dict = None):
         b = len(env_idx)
 
-        self.scene_x_offset = 0.0
-        self.scene_y_offset = 0.0
-        self.scene_z_offset = 0.0
-
-        # Define center of the circular layout
-        circle_center_x = -0.2 + self.scene_x_offset  # Center of YCB area
-        circle_center_y = 0.0 + self.scene_y_offset
-        
-        # 4 radii × 10 orderings × 5 angles = 200 unique arrangements
-        radii = torch.tensor([0.25, 0.26, 0.27, 0.28], device=self.device)  # Four different circle sizes
-        num_radii = len(radii)
-        num_orderings = 10
-        num_angles = 5
-        
-        # Resolve effective indices for layout (support global_idx like discrete envs)
+        # Resolve effective indices for layout (for determinism)
         if options is not None and "global_idx" in options:
             gidx = options["global_idx"]
             if isinstance(gidx, torch.Tensor):
@@ -240,7 +236,6 @@ class PickYCBSequentialEnv(BaseEnv):
                 gidx = torch.as_tensor(gidx, device=env_idx.device)
             assert len(gidx) == len(env_idx), "global_idx length mismatch"
             eff_idx = gidx.long()
-            # Persist mapping so partial resets (without global_idx) keep the same layout per env
             if not hasattr(self, "_assigned_global_idx") or self._assigned_global_idx.shape[0] != self.num_envs:
                 self._assigned_global_idx = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
             self._assigned_global_idx[env_idx] = eff_idx
@@ -249,85 +244,78 @@ class PickYCBSequentialEnv(BaseEnv):
                 eff_idx = self._assigned_global_idx[env_idx]
             else:
                 eff_idx = env_idx.long()
+        
+        # Create one generator per env for deterministic randomization
+        rngs = [torch.Generator(device=self.device).manual_seed(int(i)) for i in eff_idx]
 
-        # Vectorized parameter computation (use eff_idx for layout)
-        radius_idx = (eff_idx // (num_orderings * num_angles)) % num_radii  # 0..3
-        ordering_idx = (eff_idx % (num_orderings * num_angles)) // num_angles  # 0-9
-        angle_idx = eff_idx % num_angles  # 0-4
-        
-        # Get radius for each environment
-        radius = radii[radius_idx]  # Shape: (b,)
-        starting_angle = angle_idx * 72  # 0°, 72°, 144°, 216°, 288° - Shape: (b,)
-        
-        # Generate circular positions for all environments at once
-        positions = self._generate_circular_positions_vectorized(
-            circle_center_x, circle_center_y, self.scene_z_offset,
-            radius, starting_angle, ordering_idx
-        )
+        num_targets = len(self.target_model_ids)
+        num_clutters = len(self.clutter_model_ids)
+        num_models = len(self.model_ids)
 
-        # ==== CHANGE START: set per-object z using actual half-heights ====
-        # positions: (b, 5, 3); overwrite Z channel for each object type
-        for obj_idx, model_id in enumerate(self.model_ids):
-            half_h = self.ycb_half_heights_m.get(model_id, self.obj_half_size)
-            z_val = half_h + self.spawn_z_clearance
-            # broadcast to batch
-            positions[:, obj_idx, 2] = torch.full((b,), z_val, device=self.device)
+        # 1. PERMUTATION OF XY POSITIONS
+        # Extract base xy and z from self.model_poses
+        all_base_p = torch.tensor([p.p for p in self.model_poses], device=self.device, dtype=torch.float32)
+
+        target_base_xy = all_base_p[:num_targets, :2]
+        target_base_z = all_base_p[:num_targets, 2:] # Keep Z with the object model
+
+        clutter_base_xy = all_base_p[num_targets:, :2]
+        clutter_base_z = all_base_p[num_targets:, 2:] # Keep Z with the object model
+
+        # Generate and apply permutations for xy coordinates for each env
+        target_perms = torch.stack([torch.randperm(num_targets, generator=g, device=self.device) for g in rngs])
+        clutter_perms = torch.stack([torch.randperm(num_clutters, generator=g, device=self.device) for g in rngs])
         
-        # Apply positions to objects - each merged actor represents one type across all environments
+        permuted_target_xy = target_base_xy[target_perms]
+        permuted_clutter_xy = clutter_base_xy[clutter_perms]
+        
+        # Re-combine with original Z to form the new base positions for the batch
+        permuted_target_pos = torch.cat([permuted_target_xy, target_base_z.unsqueeze(0).expand(b, -1, -1)], dim=-1)
+        permuted_clutter_pos = torch.cat([permuted_clutter_xy, clutter_base_z.unsqueeze(0).expand(b, -1, -1)], dim=-1)
+
+        batch_base_pos = torch.cat([permuted_target_pos, permuted_clutter_pos], dim=1)
+
+        # 2. XY-OFFSET
+        # Generate deterministic xy-offsets with different ranges
+        max_offsets = torch.zeros(num_models, 1, device=self.device)
+        max_offsets[:num_targets] = 0.1
+        max_offsets[num_targets:] = 0.02 
+
+        xy_offsets = torch.stack([
+            (torch.rand(num_models, 2, generator=g, device=self.device) * 2 - 1) * max_offsets
+            for g in rngs
+        ])
+        
+        final_positions = batch_base_pos
+        final_positions[..., :2] += xy_offsets
+
+        # 3. Z-AXIS ROTATION
+        # Generate deterministic random orientations
+        random_angles = torch.stack([
+            torch.rand(num_models, generator=g, device=self.device) * 2 * torch.pi
+            for g in rngs
+        ])
+
+        cos_half_angle = torch.cos(random_angles / 2)
+        sin_half_angle = torch.sin(random_angles / 2)
+        z_rot_quats = torch.zeros(b, num_models, 4, device=self.device)
+        z_rot_quats[..., 0] = cos_half_angle # w
+        z_rot_quats[..., 3] = sin_half_angle # z
+        
+        # 4. APPLY FINAL POSES
         for obj_idx, obj in enumerate(self.ycb_objects):
-            obj_positions = positions[:, obj_idx, :]  # Shape: (b, 3) - positions for this object type across all environments
-            # Reset to saved initial orientations to avoid constant reconfiguration to pick up fallen objects
+            obj_positions = final_positions[:, obj_idx, :]
+            
             if not hasattr(self, "init_obj_orientations"):
-                self.init_obj_orientations = torch.empty((len(self.ycb_objects), self.num_envs, 4), device=self.device)
-            # When b=num_envs (first reset), save all initial orientations
+                self.init_obj_orientations = torch.empty((num_models, self.num_envs, 4), device=self.device)
             if len(env_idx) == self.num_envs:
                 self.init_obj_orientations[obj_idx] = obj.pose.q
             
-            obj_orientations = self.init_obj_orientations[obj_idx, env_idx]
-            obj.set_pose(Pose.create_from_pq(obj_positions, obj_orientations))
-
-    def _generate_circular_positions_vectorized(self, center_x, center_y, center_z, radius, starting_angle, ordering_idx):
-        """Generate circular positions for YCB objects using tensor operations."""
-        b = len(radius)
-        num_objects = len(self.ycb_objects)
-        
-        # Define 10 different object orderings (permutations of 5 objects)
-        # Each ordering is a list of indices representing the order around the circle
-        orderings = torch.tensor([
-            [0, 1, 2, 3, 4],  # Original order
-            [0, 2, 4, 1, 3],  # Skip by 2
-            [0, 3, 1, 4, 2],  # Skip by 3
-            [0, 4, 3, 2, 1],  # Reverse order
-            [1, 0, 2, 4, 3],  # Start with second object
-            [1, 3, 0, 2, 4],  # Another variation
-            [2, 0, 1, 4, 3],  # Start with third object
-            [2, 4, 1, 3, 0],  # Another variation
-            [3, 1, 4, 0, 2],  # Start with fourth object
-            [4, 2, 0, 1, 3],  # Start with fifth object
-        ], device=self.device)  # Shape: (10, 5)
-        
-        # Get the ordering for each environment
-        ordering = orderings[ordering_idx]  # Shape: (b, 5)
-        
-        # Calculate positions around the circle for all environments
-        # Create angle tensor: (b, 5) - each row has angles for 5 positions
-        angles = starting_angle.unsqueeze(1) + torch.arange(5, device=self.device) * 72  # Shape: (b, 5)
-        angles_rad = torch.deg2rad(angles)  # Shape: (b, 5)
-        
-        # Calculate x, y positions on the circle
-        x = center_x + radius.unsqueeze(1) * torch.cos(angles_rad)  # Shape: (b, 5)
-        y = center_y + radius.unsqueeze(1) * torch.sin(angles_rad)  # Shape: (b, 5)
-        z = torch.full((b, 5), center_z, device=self.device)  # Shape: (b, 5)
-        
-        # Stack into positions tensor: (b, 5, 3)
-        positions = torch.stack([x, y, z], dim=2)  # Shape: (b, 5, 3)
-        
-        # Reorder positions according to the ordering for each environment
-        # Use advanced indexing to reorder
-        batch_indices = torch.arange(b, device=self.device).unsqueeze(1).expand(-1, 5)  # Shape: (b, 5)
-        reordered_positions = positions[batch_indices, ordering]  # Shape: (b, 5, 3)
-        
-        return reordered_positions
+            base_orientations = self.init_obj_orientations[obj_idx, env_idx]
+            random_z_rotations = z_rot_quats[:, obj_idx, :]
+            
+            final_orientations = quaternion_multiply(random_z_rotations, base_orientations)
+            obj.set_pose(Pose.create_from_pq(obj_positions, final_orientations))
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
@@ -357,14 +345,14 @@ class PickYCBSequentialEnv(BaseEnv):
             # basket_pos=self.basket.pose.p,
         )
         
-        # if "state" in self.obs_mode:
-        #     obs.update(
-        #         # obj_pose=self.pick_obj.pose.raw_pose,
-        #         # tcp_to_obj1_pos=self.pick_obj_1.pose.p - self.agent.tcp.pose.p,
-        #         # tcp_to_obj2_pos=self.pick_obj_2.pose.p - self.agent.tcp.pose.p,
-        #         # obj1_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_1.pose.p,
-        #         # obj2_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_2.pose.p,
-        #     )
+        if "state" in self.obs_mode:
+            obs.update(
+                # obj_pose=self.pick_obj.pose.raw_pose,
+                tcp_to_obj1_pos=self.pick_obj_1.pose.p - self.agent.tcp.pose.p,
+                tcp_to_obj2_pos=self.pick_obj_2.pose.p - self.agent.tcp.pose.p,
+                obj1_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_1.pose.p,
+                obj2_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_2.pose.p,
+            )
         return obs
 
     def evaluate(self):

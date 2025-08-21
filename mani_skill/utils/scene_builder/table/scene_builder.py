@@ -20,7 +20,7 @@ class TableSceneBuilder(SceneBuilder):
     """A simple scene builder that adds a table to the scene such that the height of the table is at 0, and
     gives reasonable initial poses for robots."""
 
-    def __init__(self, env, robot_init_qpos_noise=0.02, custom_table=False, custom_basket=False, randomize_colors=False, basket_color="orange"):
+    def __init__(self, env, robot_init_qpos_noise=0.02, custom_table=False, custom_basket=False, randomize_colors=False, basket_color="white"):
         super().__init__(env, robot_init_qpos_noise)
         self.custom_table = custom_table
         self.custom_basket = custom_basket
@@ -91,7 +91,7 @@ class TableSceneBuilder(SceneBuilder):
             table_actor = builder.build_kinematic(name="table-custom")
         return table_actor
     
-    def _build_custom_basket(self, color="orange", table_center_x=0.0, table_center_y=0.0, table_surface_z=0.0, random_i=-1):
+    def _build_custom_basket(self, color="white", table_center_x=0.0, table_center_y=0.0, table_surface_z=0.0, random_i=-1):
         """
         Build a custom basket positioned at the center of the table.
         
@@ -114,6 +114,7 @@ class TableSceneBuilder(SceneBuilder):
             "gray":    [0.4980392156862745, 0.4980392156862745, 0.4980392156862745, 1],
             "olive":   [0.7372549019607844, 0.7411764705882353, 0.13333333333333333, 1],
             "cyan":    [0.09019607843137255, 0.7450980392156863, 0.8117647058823529, 1],
+            "white":   [1.0, 1.0, 1.0, 1],
         }
         self.basket_model_path = str(PACKAGE_ASSET_DIR / "custom/plastic_crate.obj")
 
@@ -128,7 +129,7 @@ class TableSceneBuilder(SceneBuilder):
             basket_builder.set_scene_idxs([random_i])
         else:
             # Use fixed color
-            basket_mat.set_base_color(color_map[color])
+            basket_mat.set_base_color(color_map['white'])
             
         basket_mat.metallic = 0.0
         basket_mat.roughness = 1.0
@@ -155,7 +156,7 @@ class TableSceneBuilder(SceneBuilder):
         #     q=euler2quat(np.pi/2, 0, np.pi * 1 / 4)  # 90 degree rotation around X-axis to lay basket horizontally
         # )
         basket_pose = sapien.Pose(
-            p=[table_center_x + 0.05, table_center_y, basket_z],
+            p=[table_center_x, table_center_y, basket_z],
             q=euler2quat(0, 0, 0)  # 90 degree rotation around X-axis to lay basket horizontally
         )
         basket_builder.initial_pose = basket_pose
