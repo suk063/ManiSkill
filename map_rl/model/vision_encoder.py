@@ -21,8 +21,8 @@ class DINO2DFeatureEncoder(nn.Module):
         super().__init__()
 
         # Load backbone lazily via torch.hub to avoid extra dependencies
-        # self.backbone = torch.hub.load("facebookresearch/dinov2", model_name)
-        self.backbone = torch.hub.load('dinov3', 'dinov3_vits16', source='local', weights=WEIIGHT_PATH)
+        self.backbone = torch.hub.load("facebookresearch/dinov2", model_name)
+        # self.backbone = torch.hub.load('dinov3', 'dinov3_vits16', source='local', weights=WEIIGHT_PATH)
         self.dino_output_dim = 384
         self.dino_proj = nn.Conv2d(self.dino_output_dim, embed_dim, kernel_size=1)
         self.embed_dim = embed_dim
@@ -37,17 +37,11 @@ class DINO2DFeatureEncoder(nn.Module):
         Returns per-patch token embeddings without the [CLS] token.
         Shape: (B, N, C), where N = (H/14)*(W/14), C = embed_dim.
         """
-        x, (H, W) = self.backbone.prepare_tokens_with_masks(x)
-
+        x = self.backbone.prepare_tokens_with_masks(x)
         for blk in self.backbone.blocks:
-            if hasattr(self.backbone, "rope_embed") and self.backbone.rope_embed is not None:
-                rope_sincos = self.backbone.rope_embed(H=H, W=W)
-            else:
-                raise ValueError("Rope embedding not found in DINOv3")
-            x = blk(x, rope_sincos)
+            x = blk(x)
         x = self.backbone.norm(x)  # (B, 1 + N, C)
-        x = x[:, 5:, :]  # drop CLS and storage tokens
-
+        x = x[:, 1:, :]            # drop CLS → (B, N, C)
         return x
 
     def forward(self, images_bchw: torch.Tensor) -> torch.Tensor:
@@ -56,7 +50,7 @@ class DINO2DFeatureEncoder(nn.Module):
             images_bchw: Float tensor in [0, 1], shape (B, 3, H, W)
 
         Returns:
-            fmap: (B, C, Hf, Wf) where C = embed_dim and Hf = H//16, Wf = W//16
+            fmap: (B, C, Hf, Wf) where C = embed_dim and Hf = H//14, Wf = W//14
         """
         if images_bchw.dtype != torch.float32:
             images_bchw = images_bchw.float()
@@ -65,11 +59,11 @@ class DINO2DFeatureEncoder(nn.Module):
         tokens = self._forward_dino_tokens(images_bchw)  # (B, N, C)
 
         C = self.dino_output_dim
-        Hf, Wf = H // 16, W // 16
+        Hf, Wf = H // 14, W // 14
         fmap = tokens.permute(0, 2, 1).reshape(B, C, Hf, Wf).contiguous()
         fmap = self.dino_proj(fmap)
+        
         return fmap
-
 
 class PlainCNNFeatureEncoder(nn.Module):
     """
