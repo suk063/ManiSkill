@@ -37,7 +37,6 @@ class DINO2DFeatureEncoder(nn.Module):
             std=(0.26862954, 0.26130258, 0.27577711),
         )
 
-    @torch.no_grad()
     def _forward_dino_tokens(self, x: torch.Tensor) -> torch.Tensor:
         """
         Returns per-patch token embeddings without the [CLS] token.
