@@ -155,7 +155,7 @@ class Args:
     model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "005_tomato_soup_can", "009_gelatin_box", "011_banana"])
 
     # Environment discretisation
-    total_envs: int = 200
+    total_envs: int = 100
     """Number of cells per axis used for discrete initialisation."""
 
     # Map-related arguments

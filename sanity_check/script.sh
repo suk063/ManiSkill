@@ -8,9 +8,7 @@ python sanity_check/ppo_state.py \
     --total_timesteps=100_000_000 \
     --num_steps=500 \
     --num_eval_steps=500 \
-    --gamma=0.99 \
-    --gae_lambda=0.95 \
-    --update_epochs=8 \
+    --gamma=0.9 \
     --learning_rate=3e-4 \
     --capture-video \
     --track \

@@ -14,7 +14,7 @@ import glob
 # MARK: Parse command line arguments
 parser = argparse.ArgumentParser(description="Scan an object and generate a point cloud.")
 parser.add_argument("-o", "--obs-mode", type=str, default="rgbd", help="Can be rgb or rgb+depth, rgb+normal, albedo+depth etc. Which ever image-like textures you want to visualize can be tacked on")
-parser.add_argument("-n", "--num-envs", type=int, default=50, help="Total number of environments to process")
+parser.add_argument("-n", "--num-envs", type=int, default=100, help="Total number of environments to process")
 parser.add_argument("-s","--seed",type=int, default=0, help="Seed the random actions and environment. Default is no seed",)
 args = parser.parse_args()
 

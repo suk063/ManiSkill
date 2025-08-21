@@ -66,14 +66,16 @@ class PickYCBSequentialEnv(BaseEnv):
             "015_peach": 0.0296,
             "008_pudding_box": 0.015,
             "051_large_clamp": 0.019,
-            "011_banana": 0.036,
+            "011_banana": 0.025,
             "005_tomato_soup_can": 0.05,
             "009_gelatin_box": 0.014,
+            "017_orange": 0.036,
+            "012_strawberry": 0.021,
         }
         
         # Define target objects
         self.target_model_ids = ["013_apple", "014_lemon"]
-        target_model_xy = [[0.04, -0.1], [0.04, 0.1]]
+        target_model_xy = [[0.0, -0.1], [0.0, 0.1]]
         self.target_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
@@ -84,12 +86,12 @@ class PickYCBSequentialEnv(BaseEnv):
             "002_master_chef_can", "004_sugar_box", "006_mustard_bottle",
             "007_tuna_fish_can", "024_bowl", "025_mug", "015_peach",
             "008_pudding_box", "051_large_clamp", "011_banana",
-            "005_tomato_soup_can", "009_gelatin_box",
+            "005_tomato_soup_can", "009_gelatin_box", "017_orange","012_strawberry",
         ]
         clutter_model_xy = [
             [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
             [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
-            [0.0, 0.52], [-0.087, -0.35], [-0.04, 0], [-0.1, 0.25],
+            [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], [0.12, 0], [-0.15, -0.21]
         ]
         self.clutter_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
@@ -278,8 +280,8 @@ class PickYCBSequentialEnv(BaseEnv):
         # 2. XY-OFFSET
         # Generate deterministic xy-offsets with different ranges
         max_offsets = torch.zeros(num_models, 1, device=self.device)
-        max_offsets[:num_targets] = 0.1
-        max_offsets[num_targets:] = 0.02 
+        max_offsets[:num_targets] = 0.05
+        max_offsets[num_targets:] = 0.01 
 
         xy_offsets = torch.stack([
             (torch.rand(num_models, 2, generator=g, device=self.device) * 2 - 1) * max_offsets
