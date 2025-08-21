@@ -58,4 +58,6 @@ output.log
 run_scripts/
 pretrained/
 playground/
-dinov3/
+dinov3
+
+segmentation_id_map.txt

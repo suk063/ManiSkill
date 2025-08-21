@@ -70,7 +70,8 @@ class DINO2DFeatureEncoder(nn.Module):
         images_bchw = self.normalize(images_bchw)
 
         B, _, H, W = images_bchw.shape
-        tokens = self._forward_dino_tokens(images_bchw)  # (B, N, C)
+        with torch.no_grad():   
+            tokens = self._forward_dino_tokens(images_bchw)  # (B, N, C)
 
         C = self.dino_output_dim
         Hf, Wf = H // 16, W // 16
