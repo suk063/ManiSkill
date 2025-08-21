@@ -223,7 +223,7 @@ class PickYCBSequentialEnv(BaseEnv):
             clutter_obj = builder.build(name=f"clutter_{model_id}_{i}")
             self.clutter_objects.append(clutter_obj)
 
-    def _initialize_ycb_objects(self, env_idx: torch.Tensor):
+    def _initialize_ycb_objects(self, env_idx: torch.Tensor, options: dict = None):
         b = len(env_idx)
 
         self.scene_x_offset = 0.0
@@ -240,10 +240,29 @@ class PickYCBSequentialEnv(BaseEnv):
         num_orderings = 10
         num_angles = 5
         
-        # Vectorized parameter computation
-        radius_idx = (env_idx // (num_orderings * num_angles)) % num_radii  # 0..3
-        ordering_idx = (env_idx % (num_orderings * num_angles)) // num_angles  # 0-9
-        angle_idx = env_idx % num_angles  # 0-4
+        # Resolve effective indices for layout (support global_idx like discrete envs)
+        if options is not None and "global_idx" in options:
+            gidx = options["global_idx"]
+            if isinstance(gidx, torch.Tensor):
+                gidx = gidx.to(env_idx.device)
+            else:
+                gidx = torch.as_tensor(gidx, device=env_idx.device)
+            assert len(gidx) == len(env_idx), "global_idx length mismatch"
+            eff_idx = gidx.long()
+            # Persist mapping so partial resets (without global_idx) keep the same layout per env
+            if not hasattr(self, "_assigned_global_idx") or self._assigned_global_idx.shape[0] != self.num_envs:
+                self._assigned_global_idx = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+            self._assigned_global_idx[env_idx] = eff_idx
+        else:
+            if hasattr(self, "_assigned_global_idx") and self._assigned_global_idx.shape[0] == self.num_envs:
+                eff_idx = self._assigned_global_idx[env_idx]
+            else:
+                eff_idx = env_idx.long()
+
+        # Vectorized parameter computation (use eff_idx for layout)
+        radius_idx = (eff_idx // (num_orderings * num_angles)) % num_radii  # 0..3
+        ordering_idx = (eff_idx % (num_orderings * num_angles)) // num_angles  # 0-9
+        angle_idx = eff_idx % num_angles  # 0-4
         
         # Get radius for each environment
         radius = radii[radius_idx]  # Shape: (b,)
@@ -324,7 +343,7 @@ class PickYCBSequentialEnv(BaseEnv):
             # if not hasattr(self, "robot_cumulative_force"):
             #     self.robot_cumulative_force = torch.zeros(self.num_envs, device=self.device)
             self.table_scene.initialize(env_idx)
-            self._initialize_ycb_objects(env_idx)
+            self._initialize_ycb_objects(env_idx, options)
         
             if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
                 self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)

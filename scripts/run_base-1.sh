@@ -33,10 +33,10 @@ run_cfg() {
     "$@"
 }
 
-run_cfg dino-map-local-fusion-base-cam  \
+run_cfg dino-map-local-fusion-base-cam-1-stage  \
   --use_map \
   --use_local_fusion \
   --vision_encoder=dino \
-  --map_start_iteration=50000000 \
+  --map_start_iteration=0 \
   --camera_uids=base_camera \
   # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-hand-cam/ckpt_latest.pt \
