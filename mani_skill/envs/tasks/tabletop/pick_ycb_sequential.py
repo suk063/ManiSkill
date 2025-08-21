@@ -190,23 +190,14 @@ class PickYCBSequentialEnv(BaseEnv):
         half_height_2 = self.ycb_half_heights_m[model_id_2]
 
         for i in range(self.num_envs):
-            # Even env_idx: apple -> obj_idx_1, lemon -> obj_idx_2
-            # Odd env_idx:  lemon -> obj_idx_1, apple -> obj_idx_2
-            if i % 2 == 0:
-                idx1, idx2 = obj_idx_1, obj_idx_2
-                h1, h2 = half_height_1, half_height_2
-            else:
-                idx1, idx2 = obj_idx_2, obj_idx_1
-                h1, h2 = half_height_2, half_height_1
-
-            self.env_target_obj_idx_1[i] = idx1
-            self.env_target_obj_half_height_1[i] = h1
-            env_ycb_obj_1 = all_ycb_objects[i][idx1]
+            self.env_target_obj_idx_1[i] = obj_idx_1
+            self.env_target_obj_half_height_1[i] = half_height_1
+            env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]
             pick_objs_1.append(env_ycb_obj_1)
-
-            self.env_target_obj_idx_2[i] = idx2
-            self.env_target_obj_half_height_2[i] = h2
-            env_ycb_obj_2 = all_ycb_objects[i][idx2]
+            
+            self.env_target_obj_idx_2[i] = obj_idx_2
+            self.env_target_obj_half_height_2[i] = half_height_2
+            env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]
             pick_objs_2.append(env_ycb_obj_2)
         
         self.pick_obj_1 = Actor.merge(pick_objs_1, name="pick_obj_1")
