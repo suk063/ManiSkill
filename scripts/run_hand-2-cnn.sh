@@ -33,7 +33,7 @@ run_cfg() {
     "$@"
 }
 
-run_cfg cnn-map-local-fusion-hand-cam-2-stage-finetune  \
+run_cfg cnn-map-local-fusion-hand-cam-2-stage  \
   --use_map \
   --use_local_fusion \
   --vision_encoder=plain_cnn \
