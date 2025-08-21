@@ -44,7 +44,7 @@ class FeatureExtractor(nn.Module):
         
         if vision_encoder == 'dino':
             self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64, freeze_backbone=True)
-            n_flatten = 14 * 14 * self.vision_encoder.embed_dim
+            n_flatten = 16 * 16 * self.vision_encoder.embed_dim
         elif vision_encoder == 'plain_cnn':
             self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=64)
             n_flatten = 14 * 14 * self.vision_encoder.embed_dim
