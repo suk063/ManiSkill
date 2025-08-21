@@ -426,7 +426,6 @@ if __name__ == "__main__":
             other_params = [p for p in agent.parameters() if id(p) not in dino_backbone_param_ids]
             optimizer = optim.Adam(
                 [
-                    {"params": dino_backbone_params, "lr": 1e-5},
                     {"params": other_params, "lr": args.learning_rate},
                 ],
                 eps=1e-5,

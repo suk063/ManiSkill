@@ -43,7 +43,7 @@ class FeatureExtractor(nn.Module):
         object.__setattr__(self, "_decoder", decoder)  # None → RGB-only mode
         
         if vision_encoder == 'dino':
-            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64)
+            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64, freeze_backbone=True)
             n_flatten = 14 * 14 * self.vision_encoder.embed_dim
         elif vision_encoder == 'plain_cnn':
             self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=64)
