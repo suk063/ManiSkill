@@ -165,6 +165,10 @@ class Args:
     """if toggled, use the local fusion of the image and map features"""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
+    freeze_dino_backbone: bool = False
+    """if toggled, freeze the DINO backbone"""
+    dino_lr: float = 5e-6
+    """learning rate for the DINO backbone if fine-tuning"""
     map_dir: str = "mapping/multi_env_maps"
     """Directory where the trained environment maps are stored."""
     decoder_path: str = "mapping/multi_env_maps/shared_decoder.pt"
@@ -417,6 +421,7 @@ if __name__ == "__main__":
         vision_encoder=args.vision_encoder,
         num_tasks=len(args.model_ids),
         camera_uids=args.camera_uids,
+        freeze_dino_backbone=args.freeze_dino_backbone,
     ).to(device)
     # Use differential learning rates for DINO backbone vs. the rest
     if args.vision_encoder == "dino":
@@ -424,12 +429,16 @@ if __name__ == "__main__":
             dino_backbone_params = list(agent.feature_net.vision_encoder.backbone.parameters())
             dino_backbone_param_ids = set(map(id, dino_backbone_params))
             other_params = [p for p in agent.parameters() if id(p) not in dino_backbone_param_ids]
-            optimizer = optim.Adam(
-                [
-                    {"params": other_params, "lr": args.learning_rate},
-                ],
-                eps=1e-5,
-            )
+            
+            param_groups = [{"params": other_params, "lr": args.learning_rate}]
+            
+            if not args.freeze_dino_backbone:
+                param_groups.append({"params": dino_backbone_params, "lr": args.dino_lr})
+                print(f"--- Fine-tuning DINO backbone with learning rate {args.dino_lr} ---")
+            else:
+                print("--- DINO backbone is frozen ---")
+
+            optimizer = optim.Adam(param_groups, eps=1e-5)
         except AttributeError:
             # Fallback in case the backbone structure changes
             optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
