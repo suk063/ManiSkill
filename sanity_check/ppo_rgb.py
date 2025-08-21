@@ -74,7 +74,7 @@ class Args:
     """the number of steps to run in each evaluation environment during evaluation"""
     reconfiguration_freq: Optional[int] = None
     """how often to reconfigure the environment during training"""
-    eval_reconfiguration_freq: Optional[int] = 1
+    eval_reconfiguration_freq: Optional[int] = None
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
