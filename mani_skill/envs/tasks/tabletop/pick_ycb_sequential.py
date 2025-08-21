@@ -305,13 +305,11 @@ class PickYCBSequentialEnv(BaseEnv):
         z_rot_quats[..., 3] = sin_half_angle # z
         
         # 4. APPLY FINAL POSES
+        if not hasattr(self, "init_obj_orientations"):
+            self.init_obj_orientations = torch.stack([obj.pose.q.clone() for obj in self.ycb_objects], dim=0)
+
         for obj_idx, obj in enumerate(self.ycb_objects):
             obj_positions = final_positions[:, obj_idx, :]
-            
-            if not hasattr(self, "init_obj_orientations"):
-                self.init_obj_orientations = torch.empty((num_models, self.num_envs, 4), device=self.device)
-            if len(env_idx) == self.num_envs:
-                self.init_obj_orientations[obj_idx] = obj.pose.q
             
             base_orientations = self.init_obj_orientations[obj_idx, env_idx]
             random_z_rotations = z_rot_quats[:, obj_idx, :]
