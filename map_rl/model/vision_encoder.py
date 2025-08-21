@@ -31,12 +31,7 @@ class DINO2DFeatureEncoder(nn.Module):
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
-        # DINOv2 normalization
-        self.normalize = transforms.Normalize(
-            mean=(0.48145466, 0.4578275, 0.40821073),
-            std=(0.26862954, 0.26130258, 0.27577711),
-        )
-
+    @torch.no_grad()
     def _forward_dino_tokens(self, x: torch.Tensor) -> torch.Tensor:
         """
         Returns per-patch token embeddings without the [CLS] token.
@@ -65,8 +60,6 @@ class DINO2DFeatureEncoder(nn.Module):
         """
         if images_bchw.dtype != torch.float32:
             images_bchw = images_bchw.float()
-        # Normalize per DINOv2 recipe
-        images_bchw = self.normalize(images_bchw)
 
         B, _, H, W = images_bchw.shape
         tokens = self._forward_dino_tokens(images_bchw)  # (B, N, C)
