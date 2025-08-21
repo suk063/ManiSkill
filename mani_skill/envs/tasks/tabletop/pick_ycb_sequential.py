@@ -39,7 +39,7 @@ class PickYCBSequentialEnv(BaseEnv):
     basket_half_size = 0.132 / 2 # 44.2964 (original_size) * 0.003 (scale) / 2.0
     basket_pos_offset = torch.tensor([0, 0, 0.1135])
 
-    def __init__(self, *args, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, camera_uids: Union[str, List[str]]="base_camera", **kwargs):
+    def __init__(self, *args, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, camera_uids: Union[str, List[str]]="hand_camera", **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         if isinstance(camera_uids, str):
             camera_uids = [camera_uids]

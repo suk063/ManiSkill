@@ -14,8 +14,8 @@ COMMON_ARGS=(
   --num_eval_envs=12
   --eval_freq=20
   --total_timesteps=100_000_000
-  --num_steps=500
-  --num_eval_steps=500
+  --num_steps=400
+  --num_eval_steps=400
   --gamma=0.9
   --learning_rate=5e-4
   --capture-video
