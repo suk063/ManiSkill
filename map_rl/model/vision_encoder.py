@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 from torchvision import transforms
 
-WEIIGHT_PATH = 'https://dinov3.llamameta.net/dinov3_vits16/dinov3_vits16_pretrain_lvd1689m-08c60483.pth?Policy=eyJTdGF0ZW1lbnQiOlt7InVuaXF1ZV9oYXNoIjoiNnp2ZGwxMGU4bmNvZXA2ZTBnNzQ5aDV3IiwiUmVzb3VyY2UiOiJodHRwczpcL1wvZGlub3YzLmxsYW1hbWV0YS5uZXRcLyoiLCJDb25kaXRpb24iOnsiRGF0ZUxlc3NUaGFuIjp7IkFXUzpFcG9jaFRpbWUiOjE3NTU4NDE1OTR9fX1dfQ__&Signature=IeOOXtAhkZykP5ZkZdUIA8fnu-RiaQmuKWi7UO5tNvRWuL41Gg0bYB3vNFoQsUG%7EytxhhUvY2IpR7gXiyAOrlt-nPaYlg46oBCgONrJaIGASZWvSE3bf-UlTpmEKUVJaV4JSVDLLJUqnjSm6Q1pOkZKJKs7xUrQt6-GxalOh81OeaYNeKAyjl0R78LUOfnpawz6OSvJLWDHNgbiyieLQOAVTj7Q-%7EwqFG8K03qlNnA2xR5twxTIz1H8jrL7tAncheODNFmmwWSWgE495O4RsD09S7LyuhxxqTnXfOmwkfUf1OZjSIDHsvzrqp1Ap31sLW5mYmrf2Ruf7IA3akO4YmA__&Key-Pair-Id=K15QRJLYKIFSLZ&Download-Request-ID=1290416756057877'
-
 class DINO2DFeatureEncoder(nn.Module):
     """
     Thin wrapper around DINOv2 ViT-S/14 to produce dense 2D feature maps.
@@ -16,7 +14,7 @@ class DINO2DFeatureEncoder(nn.Module):
         self,
         embed_dim: int = 64,
         model_name: str = "dinov2_vits14",
-        freeze_backbone: bool = False,
+        freeze_backbone: bool = True,
     ) -> None:
         super().__init__()
 
@@ -26,12 +24,12 @@ class DINO2DFeatureEncoder(nn.Module):
         self.dino_output_dim = 384
         self.dino_proj = nn.Conv2d(self.dino_output_dim, embed_dim, kernel_size=1)
         self.embed_dim = embed_dim
+        self.freeze_backbone = freeze_backbone
 
         if freeze_backbone:
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
-    @torch.no_grad()
     def _forward_dino_tokens(self, x: torch.Tensor) -> torch.Tensor:
         """
         Returns per-patch token embeddings without the [CLS] token.
@@ -56,7 +54,12 @@ class DINO2DFeatureEncoder(nn.Module):
             images_bchw = images_bchw.float()
 
         B, _, H, W = images_bchw.shape
-        tokens = self._forward_dino_tokens(images_bchw)  # (B, N, C)
+        
+        if self.freeze_backbone:
+            with torch.no_grad():
+                tokens = self._forward_dino_tokens(images_bchw)
+        else:
+            tokens = self._forward_dino_tokens(images_bchw)
 
         C = self.dino_output_dim
         Hf, Wf = H // 14, W // 14

@@ -32,6 +32,7 @@ class FeatureExtractor(nn.Module):
             use_local_fusion: bool = False,
             num_tasks: int = 2,
             camera_uids: Union[str, List[str]] = "base_camera",
+            freeze_dino_backbone: bool = True,
         ) -> None:
         super().__init__()
         
@@ -43,7 +44,7 @@ class FeatureExtractor(nn.Module):
         object.__setattr__(self, "_decoder", decoder)  # None → RGB-only mode
         
         if vision_encoder == 'dino':
-            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64, freeze_backbone=True)
+            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64, freeze_backbone=freeze_dino_backbone)
             n_flatten = 16 * 16 * self.vision_encoder.embed_dim
         elif vision_encoder == 'plain_cnn':
             self.vision_encoder = PlainCNNFeatureEncoder(embed_dim=64)
@@ -243,6 +244,7 @@ class Agent(nn.Module):
         vision_encoder: str = "plain_cnn",
         num_tasks: int = 2,
         camera_uids: Union[str, List[str]] = "base_camera",
+        freeze_dino_backbone: bool = True,
     ):
         super().__init__()
 
@@ -254,6 +256,7 @@ class Agent(nn.Module):
             vision_encoder=vision_encoder,
             num_tasks=num_tasks,
             camera_uids=camera_uids,
+            freeze_dino_backbone=freeze_dino_backbone,
         )
         latent_size = self.feature_net.output_dim
         
