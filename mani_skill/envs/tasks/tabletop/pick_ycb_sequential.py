@@ -518,7 +518,7 @@ class PickYCBSequentialEnv(BaseEnv):
         reward = update_max(reward, mask_prog1, cand)
 
         prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & (v_norm <= 0.05))
+        self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & (v_norm <= 0.02))
 
         just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
         cand = 14.0
