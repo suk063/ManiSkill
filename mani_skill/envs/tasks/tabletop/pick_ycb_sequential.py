@@ -104,7 +104,10 @@ class PickYCBSequentialEnv(BaseEnv):
         self.model_ids = self.target_model_ids + self.clutter_model_ids
         self.model_poses = self.target_model_poses + self.clutter_model_poses
 
-        self.target_qpos = torch.from_numpy(np.array([0, 0.22, -1.23, 0, 1.01, 0, 0, 0, 0, 0, 0, 0]))
+        self.target_qpos = torch.tensor(
+            [0, 0.22, -1.23, 0, 1.01, 0, 0, 0, 0, 0, 0, 0],
+            dtype=torch.float32
+        )
 
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
@@ -496,22 +499,38 @@ class PickYCBSequentialEnv(BaseEnv):
         # =========================
         # Post-O1: Robot returns to initial pose
         # =========================
-        robot_qpos = self.agent.robot.get_qpos()
-        linf_err = torch.max(torch.abs(robot_qpos - self.target_qpos.to(self.device)), dim=1).values
-        
-        # Reward for returning to a neutral pose (up to +2)
-        return_to_start_reward = 2.0 * (1.0 - torch.tanh(5.0 * linf_err))
-        cand = 13.0 + return_to_start_reward
+        robot_qpos = self.agent.robot.get_qpos()  # [B, DoF]
+        target_qpos = self.target_qpos.to(robot_qpos.device).to(robot_qpos.dtype)  # [DoF]
+
+        diff = (robot_qpos - target_qpos).abs()  # [B, DoF]
+
+        tol_val = max(float(self.robot_init_qpos_noise), 1e-6)
+        tol = torch.tensor(tol_val, device=diff.device, dtype=diff.dtype)
+
+        # Soft L∞ error
+        linf_err_soft = tol * torch.logsumexp(diff / tol, dim=1)  # [B]
+
+        # Calibrate slope (approx.)
+        k = torch.atanh(torch.tensor(0.5, device=diff.device, dtype=diff.dtype)) / tol
+
+        qvel = self.agent.robot.get_qvel()              # [B, DoF]
+        v_norm = torch.linalg.norm(qvel, dim=1)         # [B]
+        robot_static_reward = 1.0 - torch.tanh(5.0 * v_norm)  # [0, 1)
+
+        return_to_start_reward = 2.0 * (1.0 - torch.tanh(k * linf_err_soft))
+
+        cand = 13.0 + return_to_start_reward + robot_static_reward
         reward = update_max(reward, mask_prog1, cand)
 
         prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        
-        # Gate for starting Object 2 task
-        # Update the flag if the condition is met. Once true, it stays true.
-        self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & (linf_err < self.robot_init_qpos_noise))
+
+        # --- Gate to start Object 2 task ---
+        near_home_and_slow = (linf_err_soft <= tol) & (v_norm <= 0.1)
+
+        self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & near_home_and_slow)
 
         just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
-        cand = 16.0
+        cand = 17.0
         reward = update_max(reward, just_returned_to_start, cand)
 
         # =========================
@@ -521,24 +540,24 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_pos_2 = self.pick_obj_2.pose.p
         obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
         reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2))
-        cand = 16.0 + reach_obj_2_reward
+        cand = 17.0 + reach_obj_2_reward
         reward = update_max(reward, self.returned_to_start_flag, cand)
 
         # 2. Grasp reward
         is_grasped_2 = self.returned_to_start_flag & info["is_grasped_obj_2"]
-        cand = 21.0
+        cand = 22.0
         reward = update_max(reward, is_grasped_2, cand)
 
         # 3. Lift reward
         obj_bottom_z_2 = obj_pos_2[..., 2] - self.env_target_obj_half_height_2
         lifted_2 = is_grasped_2 & (obj_bottom_z_2 >= 0.01)
-        cand = 22.0
+        cand = 23.0
         reward = update_max(reward, lifted_2, cand)
 
         # 4. Approach basket top for O2 (while grasped)
         obj_to_basket_top_dist_2 = torch.linalg.norm(basket_top_target - obj_pos_2, dim=1)
         reach_basket_top_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_top_dist_2)
-        cand = 22.0 + 3.0 * reach_basket_top_reward_2
+        cand = 23.0 + 3.0 * reach_basket_top_reward_2
         reward = update_max(reward, lifted_2, cand)
 
         # 5. Enter basket for O2
@@ -547,19 +566,19 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos_2 - obj_pos_2, dim=1)
         reach_inside_basket_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_2)
         mask_e2 = lifted_2 & info["is_entering_basket_obj_2"]
-        cand = 25.0 + reach_inside_basket_reward_2
+        cand = 26.0 + reach_inside_basket_reward_2
         reward = update_max(reward, mask_e2, cand)
 
         # 6. Place inside basket for O2 (ungrasp + static)
         v2 = torch.linalg.norm(self.pick_obj_2.linear_velocity, dim=1)
         av2 = torch.linalg.norm(self.pick_obj_2.angular_velocity, dim=1)
         static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
-        cand = 26.0 + static_reward_2
+        cand = 27.0 + static_reward_2
         placed_mask_2 = self.returned_to_start_flag & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
         reward = update_max(reward, placed_mask_2, cand)
 
         # 7. object 2 is placed in basket reward
-        cand = 29.0
+        cand = 30.0
         reward = update_max(reward, info["success_obj_2"], cand)
 
         # =========================
@@ -578,13 +597,13 @@ class PickYCBSequentialEnv(BaseEnv):
             & (~info["is_grasped_obj_2"])
         )
         final_state_reward = robot_static_reward + reach_basket_top_reward
-        cand = 29.0 + final_state_reward
+        cand = 30.0 + final_state_reward
         reward = update_max(reward, final_state, cand)
 
         # =========================
         # Success bonus
         # =========================
-        reward_success = torch.full_like(reward, 32.0)
+        reward_success = torch.full_like(reward, 33.0)
         reward = update_max(reward, info["success"], reward_success)
         return reward
 
@@ -593,4 +612,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 32.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 33.0
