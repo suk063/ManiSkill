@@ -24,10 +24,11 @@ python sanity_check/ppo_rgb.py \
     --num_eval_envs=20 \
     --eval_freq=20 \
     --total_timesteps=100_000_000 \
-    --num_steps=200 \
-    --num_eval_steps=200 \
-    --gamma=0.9 \
+    --num_steps=300 \
+    --num_eval_steps=300 \
+    --gamma=0.95 \
     --learning_rate=3e-4 \
     --capture-video \
     --track \
-    --wandb_project_name "PPO-RL-Map"
+    --wandb_project_name "PPO-RL-Map" \
+    --checkpoint "runs/YCB_sequential_xarm6_ppo_rgb/ckpt_81.pt"

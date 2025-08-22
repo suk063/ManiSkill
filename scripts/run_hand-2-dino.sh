@@ -11,13 +11,13 @@ COMMON_ARGS=(
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
   --num_envs=32
-  --num_eval_envs=12
+  --num_eval_envs=20
   --eval_freq=20
   --total_timesteps=100_000_000
-  --num_steps=400
-  --num_eval_steps=400
-  --gamma=0.9
-  --learning_rate=5e-4
+  --num_steps=300
+  --num_eval_steps=300
+  --gamma=0.95
+  --learning_rate=3e-4
   --capture-video
   --track
   --wandb_project_name "PPO-RL-Map"
@@ -33,7 +33,7 @@ run_cfg() {
     "$@"
 }
 
-run_cfg dino-map-local-fusion-hand-cam-2-stage-finetune  \
+run_cfg dino-map-local-fusion-hand-cam-2-stage \
   --use_map \
   --use_local_fusion \
   --vision_encoder=dino \

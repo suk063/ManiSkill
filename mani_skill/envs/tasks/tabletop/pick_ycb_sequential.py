@@ -21,7 +21,7 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-@register_env("PickYCBSequential-v1", max_episode_steps=500)
+@register_env("PickYCBSequential-v1", max_episode_steps=300)
 class PickYCBSequentialEnv(BaseEnv):
 
     SUPPORTED_ROBOTS = [
@@ -36,10 +36,10 @@ class PickYCBSequentialEnv(BaseEnv):
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
     
-    basket_half_size = 0.132 / 2 # 44.2964 (original_size) * 0.003 (scale) / 2.0
-    basket_pos_offset = torch.tensor([0, 0, 0.1135])
+    basket_half_size = 0.0554 # 44.2964 (original_size) * 0.0025 (scale) / 2.0
+    basket_pos_offset = torch.tensor([0, 0, 0.09458])
 
-    def __init__(self, *args, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.02, camera_uids: Union[str, List[str]]="hand_camera", **kwargs):
+    def __init__(self, *args, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.05, camera_uids: Union[str, List[str]]="hand_camera", **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         if isinstance(camera_uids, str):
             camera_uids = [camera_uids]
@@ -347,14 +347,14 @@ class PickYCBSequentialEnv(BaseEnv):
             # basket_pos=self.basket.pose.p,
         )
         
-        if "state" in self.obs_mode:
-            obs.update(
-                # obj_pose=self.pick_obj.pose.raw_pose,
-                tcp_to_obj1_pos=self.pick_obj_1.pose.p - self.agent.tcp.pose.p,
-                tcp_to_obj2_pos=self.pick_obj_2.pose.p - self.agent.tcp.pose.p,
-                obj1_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_1.pose.p,
-                obj2_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_2.pose.p,
-            )
+        # if "state" in self.obs_mode:
+        #     obs.update(
+        #         # obj_pose=self.pick_obj.pose.raw_pose,
+        #         tcp_to_obj1_pos=self.pick_obj_1.pose.p - self.agent.tcp.pose.p,
+        #         tcp_to_obj2_pos=self.pick_obj_2.pose.p - self.agent.tcp.pose.p,
+        #         obj1_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_1.pose.p,
+        #         obj2_to_basket_pos=(self.basket.pose.p + self.basket_pos_offset.to(self.device)) - self.pick_obj_2.pose.p,
+        #     )
         return obs
 
     def evaluate(self):

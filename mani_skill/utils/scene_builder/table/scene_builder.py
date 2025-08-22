@@ -138,19 +138,19 @@ class TableSceneBuilder(SceneBuilder):
         # NOTE (Sunghwan): scale is set to 0.003 for x and y, and 0.006 for z.
         basket_builder.add_visual_from_file(
             self.basket_model_path,
-            scale=[0.002, 0.003, 0.003],
+            scale=[0.002, 0.003, 0.0025],
             material=basket_mat,
         ) # now size is 0.24 * 0.24 * 0.132
         
         basket_builder.add_nonconvex_collision_from_file(
             filename=self.basket_model_path,
-            scale=[0.002, 0.003, 0.003]
+            scale=[0.002, 0.003, 0.0025]
         )
         
         # Position basket at center of table, on top of the table surface
         # The basket's bottom should sit on the table surface
         # (sunghwan) (NOTE) move basket toward x axis and rotate 1/4 pi
-        basket_z = table_surface_z - 0.1135  # 37.8518 * 0.003
+        basket_z = table_surface_z - 0.09458  # 37.8518 * 0.0025
         # basket_pose = sapien.Pose(
         #     p=[table_center_x + 0.05, table_center_y, basket_z],
         #     q=euler2quat(np.pi/2, 0, np.pi * 1 / 4)  # 90 degree rotation around X-axis to lay basket horizontally

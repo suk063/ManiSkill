@@ -109,7 +109,7 @@ def capture():
     print(f"[OK] captured {len(pcd.points)} pts; total {sum(map(len, pts_all))}")
     # imageio.imwrite(IMG_DIR / f"{frame_idx:04d}.png", rgb_np)
 
-TOTAL_SIM_STEPS = 10000
+TOTAL_SIM_STEPS = 4000
 CAPTURE_INTERVAL = 20
 
 null_action = np.zeros(env.action_space.shape)
