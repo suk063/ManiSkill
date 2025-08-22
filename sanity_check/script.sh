@@ -31,4 +31,4 @@ python sanity_check/ppo_rgb.py \
     --capture-video \
     --track \
     --wandb_project_name "PPO-RL-Map" \
-    --checkpoint "runs/YCB_sequential_xarm6_ppo_rgb/ckpt_81.pt"
+    --checkpoint "pretrained/image_based.pt"
