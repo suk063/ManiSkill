@@ -513,10 +513,12 @@ class PickYCBSequentialEnv(BaseEnv):
         # near_home_and_slow = (linf_err_hard <= tol) & (v_norm <= 0.1)
 
         v_norm = torch.linalg.norm(self.agent.robot.get_qvel(), dim=1)         # [B]
-        # robot_static_reward = 1.0 - torch.tanh(5.0 * v_norm)  # [0, 1)
+        robot_static_reward = 1.0 - torch.tanh(5.0 * v_norm)  # [0, 1)
+        cand = 13.0 + robot_static_reward
+        reward = update_max(reward, mask_prog1, cand)
 
         prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & (v_norm <= 0.1))
+        self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & (v_norm <= 0.05))
 
         just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
         cand = 14.0
