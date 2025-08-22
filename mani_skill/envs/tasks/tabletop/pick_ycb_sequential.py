@@ -501,32 +501,24 @@ class PickYCBSequentialEnv(BaseEnv):
         # =========================
         robot_qpos = self.agent.robot.get_qpos()  # [B, DoF]
         target_qpos = self.target_qpos.to(robot_qpos.device).to(robot_qpos.dtype)  # [DoF]
-
         diff = (robot_qpos - target_qpos).abs()  # [B, DoF]
-
         tol_val = max(float(self.robot_init_qpos_noise), 1e-6)
         tol = torch.tensor(tol_val, device=diff.device, dtype=diff.dtype)
-
-        # Soft L∞ error
         linf_err_soft = tol * torch.logsumexp(diff / tol, dim=1)  # [B]
-
-        # Calibrate slope (approx.)
         k = torch.atanh(torch.tensor(0.5, device=diff.device, dtype=diff.dtype)) / tol
-
-        qvel = self.agent.robot.get_qvel()              # [B, DoF]
-        v_norm = torch.linalg.norm(qvel, dim=1)         # [B]
-        robot_static_reward = 1.0 - torch.tanh(5.0 * v_norm)  # [0, 1)
-
         return_to_start_reward = 2.0 * (1.0 - torch.tanh(k * linf_err_soft))
+
+        v_norm = torch.linalg.norm(self.agent.robot.get_qvel(), dim=1)         # [B]
+        robot_static_reward = 1.0 - torch.tanh(5.0 * v_norm)  # [0, 1)
 
         cand = 13.0 + return_to_start_reward + robot_static_reward
         reward = update_max(reward, mask_prog1, cand)
 
-        prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-
         # --- Gate to start Object 2 task ---
-        near_home_and_slow = (linf_err_soft <= tol) & (v_norm <= 0.1)
+        linf_err_hard = diff.max(dim=1).values   # [B]
+        near_home_and_slow = (linf_err_hard <= tol) & (v_norm <= 0.1)
 
+        prev_returned_to_start_flag = self.returned_to_start_flag.clone()
         self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & near_home_and_slow)
 
         just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
