@@ -293,7 +293,7 @@ def main():
             # (NOTE): match the intrinsic of the camera,  fx fy 193.9897 double check
             coords_world, _ = get_3d_coordinates(
                 depth_t, extrinsic_t,
-                fx=154.1548, fy=154.1548, cx=112, cy=112,
+                fx=193.9897, fy=193.9897, cx=112, cy=112,
             )
 
             B, C_, Hf, Wf = vis_feat.shape
