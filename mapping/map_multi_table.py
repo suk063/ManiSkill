@@ -171,7 +171,7 @@ OPT_LR = 1e-3
 #  Scene bounds (should match map_table.py)                                   #
 # --------------------------------------------------------------------------- #
 SCENE_MIN = (-0.8, -1.0, -0.3)
-SCENE_MAX = (0.4,  1.0,  0.5)
+SCENE_MAX = (0.4,  1.0,  0.3)
 
 # --------------------------------------------------------------------------- #
 #  Helper functions                                                           #
@@ -290,6 +290,7 @@ def main():
             with torch.no_grad():
                 vis_feat = get_visual_features(clip_model, img_tensor)
             
+            # (NOTE): match the intrinsic of the camera,  fx fy 193.9897 double check
             coords_world, _ = get_3d_coordinates(
                 depth_t, extrinsic_t,
                 fx=154.1548, fy=154.1548, cx=112, cy=112,
