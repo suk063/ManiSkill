@@ -124,22 +124,6 @@ class Args:
     target_kl: float = 0.2
     """the target KL divergence threshold"""
 
-    # KL penalty (adaptive)
-    use_kl_penalty: bool = True
-    """if toggled, add KL penalty term to the policy loss and adapt its coef."""
-    kl_coef: float = 1.0
-    """initial coefficient for KL penalty term"""
-    kl_target: float = 0.01
-    """target KL magnitude for adaptive adjustment of kl_coef"""
-    kl_adapt_rate: float = 2.0
-    """multiplicative factor to adjust kl_coef when KL is above/below target"""
-    kl_coef_min: float = 1e-4
-    """lower bound for kl_coef when adapting"""
-    kl_coef_max: float = 10.0
-    """upper bound for kl_coef when adapting"""
-    # Dual-Clip PPO
-    dual_clip: Optional[float] = 2.0
-    """if set, enable Dual-Clip with this coefficient (e.g., 2.0)."""
     reward_scale: float = 1.0
     """Scale the reward by this factor"""
     eval_freq: int = 25
@@ -445,8 +429,6 @@ if __name__ == "__main__":
             optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     else:
         optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-    # KL penalty coefficient (adaptive)
-    kl_coef = args.kl_coef
 
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint)
@@ -458,7 +440,6 @@ if __name__ == "__main__":
             opt_state["param_groups"] = optimizer.param_groups
             optimizer.load_state_dict(opt_state)
             global_step = checkpoint["global_step"]
-            kl_coef = checkpoint["kl_coef"]
             start_iteration = checkpoint["iteration"] + 1
         else:
             start_iteration = 1
@@ -583,11 +564,11 @@ if __name__ == "__main__":
         if args.save_model and iteration % args.eval_freq == 1:
             model_path = f"runs/{run_name}/ckpt_latest.pt"
             # torch.save(agent.state_dict(), model_path)
-            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
+            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step), model_path)
             print(f"model saved to {model_path}")
         if args.save_model and iteration % args.checkpoint_freq == 0:
             model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
-            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step, kl_coef), model_path)
+            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step), model_path)
             print(f"model saved to {model_path}")
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -756,8 +737,6 @@ if __name__ == "__main__":
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
-                # differentiable KL approximation for penalty term
-                approx_kl_loss = ((ratio - 1) - logratio).mean()
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
@@ -772,15 +751,10 @@ if __name__ == "__main__":
                 if args.norm_adv:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
-                # Policy loss (with Dual-Clip option)
+                # Policy loss
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss_unreduced = torch.max(pg_loss1, pg_loss2)
-                if args.dual_clip is not None:
-                    neg_mask = mb_advantages < 0
-                    dual_bound = -args.dual_clip * mb_advantages
-                    pg_loss_unreduced = torch.where(neg_mask, torch.max(pg_loss_unreduced, dual_bound), pg_loss_unreduced)
-                pg_loss = pg_loss_unreduced.mean()
+                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
                 newvalue = newvalue.view(-1)
@@ -798,9 +772,7 @@ if __name__ == "__main__":
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 entropy_loss = entropy.mean()
-                # Add KL penalty if enabled
-                kl_term = kl_coef * approx_kl_loss if args.use_kl_penalty else 0.0
-                loss = pg_loss + kl_term - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -809,16 +781,6 @@ if __name__ == "__main__":
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
-        # Adapt KL coefficient once per epoch, using the measured approx_kl
-        if args.use_kl_penalty:
-            try:
-                kl_val = float(approx_kl.item())
-                if kl_val > args.kl_target:
-                    kl_coef = min(kl_coef * args.kl_adapt_rate, args.kl_coef_max)
-                else:
-                    kl_coef = max(kl_coef / args.kl_adapt_rate, args.kl_coef_min)
-            except NameError:
-                pass
         update_time = time.perf_counter() - update_time
         cumulative_times["update_time"] += update_time
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
@@ -831,8 +793,6 @@ if __name__ == "__main__":
         logger.add_scalar("losses/entropy", entropy_loss.item(), global_step)
         logger.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
         logger.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        if args.use_kl_penalty:
-            logger.add_scalar("losses/kl_coef", kl_coef, global_step)
         logger.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         logger.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
@@ -847,7 +807,7 @@ if __name__ == "__main__":
     if args.save_model and not args.evaluate:
         model_path = f"runs/{run_name}/ckpt_latest.pt"
         # torch.save(agent.state_dict(), model_path)
-        torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, args.num_iterations, global_step, kl_coef), model_path)
+        torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, args.num_iterations, global_step), model_path)
         print(f"model saved to {model_path}")
 
     envs.close()

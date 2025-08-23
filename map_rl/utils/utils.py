@@ -59,7 +59,7 @@ class DictArray(object):
         return DictArray(new_buffer_shape, None, data_dict=new_dict)
 
 
-def build_checkpoint(agent, decoder, args, envs, optimizer=None, iteration=None, global_step=None, kl_coef=None):
+def build_checkpoint(agent, decoder, args, envs, optimizer=None, iteration=None, global_step=None):
     """
     Pack everything you might need at inference time into one dict.
     """
@@ -80,8 +80,6 @@ def build_checkpoint(agent, decoder, args, envs, optimizer=None, iteration=None,
         ckpt["iteration"] = iteration
     if global_step is not None:
         ckpt["global_step"] = global_step
-    if kl_coef is not None:
-        ckpt["kl_coef"] = kl_coef
     return ckpt
 
 class Logger:
