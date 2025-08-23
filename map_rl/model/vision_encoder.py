@@ -22,7 +22,12 @@ class DINO2DFeatureEncoder(nn.Module):
         self.backbone = torch.hub.load("facebookresearch/dinov2", model_name)
         # self.backbone = torch.hub.load('dinov3', 'dinov3_vits16', source='local', weights=WEIIGHT_PATH)
         self.dino_output_dim = 384
-        self.dino_proj = nn.Conv2d(self.dino_output_dim, embed_dim, kernel_size=1)
+        self.dino_proj = nn.Sequential(
+            nn.Conv2d(self.dino_output_dim, 64, kernel_size=1, bias=False),
+            nn.GroupNorm(1, 64),  # Equivalent to LayerNorm for channels
+            nn.GELU(),
+            nn.Conv2d(64, embed_dim, kernel_size=1),
+        )
         self.embed_dim = embed_dim
         self.freeze_backbone = freeze_backbone
 
