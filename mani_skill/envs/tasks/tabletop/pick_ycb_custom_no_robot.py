@@ -31,7 +31,7 @@ class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
     def _default_human_render_camera_configs(self):
         moving_camera = CameraConfig(
             "moving_camera", pose=sapien.Pose(), width=224, height=224,
-            fov=np.pi * 0.4, near=0.01, far=100, mount=self.cam_mount
+            fov=np.pi / 3, near=0.01, far=100, mount=self.cam_mount
         )
         fixed_cam_pose = sapien_utils.look_at(eye=[0.508, -0.5, 0.42], target=[-0.522, 0.2, 0])
         return [

@@ -10,7 +10,7 @@ COMMON_ARGS=(
   --env_id=PickYCBSequential-v1 # PickYCBCustom-v1
   --robot_uids=xarm6_robotiq
   --control_mode=pd_joint_vel
-  --num_envs=32
+  --num_envs=20
   --num_eval_envs=20
   --eval_freq=20
   --total_timesteps=100_000_000
@@ -34,9 +34,10 @@ run_cfg() {
 }
 
 run_cfg dino-map-local-fusion-hand-cam-2-stage \
-  # --use_map \
-  # --use_local_fusion \
+  --use_map \
+  --use_local_fusion \
   --vision_encoder=dino \
-  # --map_start_iteration=10000000 \
+  --map_start_iteration=10000000 \
   --camera_uids=hand_camera \
+  --freeze_dino_backbone \
   # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-hand-cam/ckpt_latest.pt \
