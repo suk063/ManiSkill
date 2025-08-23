@@ -169,9 +169,9 @@ class Args:
     """if toggled, freeze the DINO backbone"""
     dino_lr: float = 5e-6
     """learning rate for the DINO backbone if fine-tuning"""
-    map_dir: str = "mapping/multi_env_maps"
+    map_dir: str = "mapping/multi_env_maps_custom"
     """Directory where the trained environment maps are stored."""
-    decoder_path: str = "mapping/multi_env_maps/shared_decoder.pt"
+    decoder_path: str = "mapping/multi_env_maps_custom/shared_decoder.pt"
     """Path to the trained shared decoder model."""
 
     # Online mapping arguments

@@ -54,7 +54,7 @@ class PickYCBSequentialEnv(BaseEnv):
         
         # These are for clutter environment where all the objects will appear in all parallel environment
         
-        self.object_heights = {
+        self.object_heights_half = {
             "013_apple": 0.035,
             "014_lemon": 0.025,
             "002_master_chef_can": 0.05,
@@ -79,7 +79,7 @@ class PickYCBSequentialEnv(BaseEnv):
         self.target_model_ids = ["013_apple", "014_lemon"]
         target_model_xy = [[0.0, -0.1], [0.0, 0.1]]
         self.target_model_poses = [
-            sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
+            sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
         ]
 
@@ -96,7 +96,7 @@ class PickYCBSequentialEnv(BaseEnv):
             [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], [0.12, 0], [-0.15, -0.21], [-0.44, 0.6], [-0.49, -0.64]
         ]
         self.clutter_model_poses = [
-            sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
+            sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.clutter_model_ids, clutter_model_xy)
         ]
         
@@ -216,15 +216,28 @@ class PickYCBSequentialEnv(BaseEnv):
         half_height_2 = float(self.model_poses[obj_idx_2].p[2])
 
         for i in range(self.num_envs):
-            self.env_target_obj_idx_1[i] = obj_idx_1
-            self.env_target_obj_half_height_1[i] = half_height_1
-            env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]
-            pick_objs_1.append(env_ycb_obj_1)
-            
-            self.env_target_obj_idx_2[i] = obj_idx_2
-            self.env_target_obj_half_height_2[i] = half_height_2
-            env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]
-            pick_objs_2.append(env_ycb_obj_2)
+            # Even envs: lemon -> apple
+            if i % 2 == 0:
+                self.env_target_obj_idx_1[i] = obj_idx_2
+                self.env_target_obj_half_height_1[i] = half_height_2
+                env_ycb_obj_1 = all_ycb_objects[i][obj_idx_2]
+                pick_objs_1.append(env_ycb_obj_1)
+                
+                self.env_target_obj_idx_2[i] = obj_idx_1
+                self.env_target_obj_half_height_2[i] = half_height_1
+                env_ycb_obj_2 = all_ycb_objects[i][obj_idx_1]
+                pick_objs_2.append(env_ycb_obj_2)
+            # Odd envs: apple -> lemon
+            else:
+                self.env_target_obj_idx_1[i] = obj_idx_1
+                self.env_target_obj_half_height_1[i] = half_height_1
+                env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]
+                pick_objs_1.append(env_ycb_obj_1)
+                
+                self.env_target_obj_idx_2[i] = obj_idx_2
+                self.env_target_obj_half_height_2[i] = half_height_2
+                env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]
+                pick_objs_2.append(env_ycb_obj_2)
         
         self.pick_obj_1 = Actor.merge(pick_objs_1, name="pick_obj_1")
         self.pick_obj_2 = Actor.merge(pick_objs_2, name="pick_obj_2")
