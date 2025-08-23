@@ -99,16 +99,17 @@ class Logger:
 # GridSampler: ensure shuffled, non-repeating sampling across training batches
 # -----------------------------------------------------------------------------
 class GridSampler:
-    def __init__(self, all_grids, batch_size: int):
+    def __init__(self, all_grids, batch_size: int, seed: int = 0):
         self.all_grids = all_grids
         self.total_grids = len(all_grids)
         self.batch_size = batch_size
         self.indices = np.array([], dtype=int)
+        self.rng = np.random.RandomState(seed)
 
     def _ensure_indices(self):
         if len(self.indices) < self.batch_size:
             new_indices = np.arange(self.total_grids)
-            np.random.shuffle(new_indices)
+            self.rng.shuffle(new_indices)
             self.indices = np.concatenate([self.indices, new_indices])
 
     def sample(self):

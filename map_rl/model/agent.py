@@ -122,6 +122,7 @@ class FeatureExtractor(nn.Module):
         
         fx = fy = observations["sensor_param"][camera_uid]["intrinsic_cv"][0][0][0]
         cx = cy = observations["sensor_param"][camera_uid]["intrinsic_cv"][0][0][2]
+
         q_xyz, _ = get_3d_coordinates(
             depth_s,
             pose,

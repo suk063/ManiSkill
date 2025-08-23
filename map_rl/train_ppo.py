@@ -169,9 +169,9 @@ class Args:
     """if toggled, freeze the DINO backbone"""
     dino_lr: float = 5e-6
     """learning rate for the DINO backbone if fine-tuning"""
-    map_dir: str = "mapping/multi_env_maps"
+    map_dir: str = "mapping/multi_env_maps_custom"
     """Directory where the trained environment maps are stored."""
-    decoder_path: str = "mapping/multi_env_maps/shared_decoder.pt"
+    decoder_path: str = "mapping/multi_env_maps_custom/shared_decoder.pt"
     """Path to the trained shared decoder model."""
 
     # Online mapping arguments
@@ -297,17 +297,18 @@ if __name__ == "__main__":
 
     # Helper for a fixed random subset for evaluation (always available)
     def _random_sample_eval(n_envs: int):
-        idx = np.random.choice(total_envs, n_envs, replace=False)
+        rng = np.random.RandomState(seed=args.seed)
+        idx = rng.choice(total_envs, n_envs, replace=False)
         return idx
 
     # Create GridSampler once. When not using map, create dummy list of length total_envs
     batch_train_envs = args.num_envs if not args.evaluate else 1
     if args.use_map:
-        grid_sampler = GridSampler(all_grids, batch_train_envs)
+        grid_sampler = GridSampler(all_grids, batch_train_envs, seed=args.seed)
     else:
         # Create a placeholder list to satisfy GridSampler API; we only need indices
         dummy_list = list(range(total_envs))
-        grid_sampler = GridSampler(dummy_list, batch_train_envs)
+        grid_sampler = GridSampler(dummy_list, batch_train_envs, seed=args.seed)
 
     # Initial training/eval subsets
     active_indices, grids = grid_sampler.sample()

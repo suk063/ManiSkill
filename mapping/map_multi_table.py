@@ -146,6 +146,9 @@ clip_model = clip_model.to(DEVICE).eval()
 # --------------------------------------------------------------------------- #
 GRID_LVLS         = 2
 GRID_FEAT_DIM     = 64
+LEVEL_SCALE       = 2.0
+HASH_TABLE_SIZE   = 2**21
+RESOLUTION        = 0.06
 decoder = ImplicitDecoder(
     voxel_feature_dim=GRID_FEAT_DIM * GRID_LVLS,
     hidden_dim=240,
@@ -170,8 +173,8 @@ OPT_LR = 1e-3
 # --------------------------------------------------------------------------- #
 #  Scene bounds (should match map_table.py)                                   #
 # --------------------------------------------------------------------------- #
-SCENE_MIN = (-0.8, -1.0, -0.3)
-SCENE_MAX = (0.4,  1.0,  0.5)
+SCENE_MIN = (-0.8, -1.0, -0.1)
+SCENE_MAX = (0.4,  1.0,  0.3)
 
 # --------------------------------------------------------------------------- #
 #  Helper functions                                                           #
@@ -192,6 +195,13 @@ def main():
     output_path = Path(args.output_dir)
     if args.save or args.pca:
         output_path.mkdir(parents=True, exist_ok=True)
+
+    intrinsic_path = dataset_path / "intrinsic.txt"
+    if not intrinsic_path.exists():
+        print(f"[ERROR] Intrinsic file not found at {intrinsic_path}.")
+        return
+    K = np.loadtxt(intrinsic_path)
+    fx, fy, cx, cy = K[0,0], K[1,1], K[0,2], K[1,2]
 
     try:
         world_to_cam_poses = load_w2c_poses_from_dir(args.poses_dir)
@@ -217,9 +227,11 @@ def main():
     grids = {}
     for env_dir in env_dirs:
         grid = VoxelHashTable(
-            resolution=0.12,
+            resolution=RESOLUTION,
             num_levels=GRID_LVLS,
+            level_scale=LEVEL_SCALE,
             feature_dim=GRID_FEAT_DIM,
+            hash_table_size=HASH_TABLE_SIZE,
             scene_bound_min=SCENE_MIN,
             scene_bound_max=SCENE_MAX,
             device=DEVICE,
@@ -228,16 +240,16 @@ def main():
         grids[env_dir.name] = grid
         
         stats = grid.collision_stats()
-        # print(f"--- Collision stats for {env_dir.name}: ---")
-        # for level_name, stat in stats.items():
-        #     total = stat['total']
-        #     collisions = stat['col']
-        #     if total > 0:
-        #         percentage = (collisions / total) * 100
-        #         print(f"  {level_name}: {collisions} collisions out of {total} voxels ({percentage:.2f}%)")
-        #     else:
-        #         print(f"  {level_name}: 0 voxels")
-        # print("-------------------------------------------------")
+        print(f"--- Collision stats for {env_dir.name}: ---")
+        for level_name, stat in stats.items():
+            total = stat['total']
+            collisions = stat['col']
+            if total > 0:
+                percentage = (collisions / total) * 100
+                print(f"  {level_name}: {collisions} collisions out of {total} voxels ({percentage:.2f}%)")
+            else:
+                print(f"  {level_name}: 0 voxels")
+        print("-------------------------------------------------")
 
     
     # --- Aggregate raw valid coordinates for each environment (for viz) ---
@@ -290,9 +302,10 @@ def main():
             with torch.no_grad():
                 vis_feat = get_visual_features(clip_model, img_tensor)
             
+            # (NOTE): match the intrinsic of the camera,  fx fy 193.9897 double check
             coords_world, _ = get_3d_coordinates(
                 depth_t, extrinsic_t,
-                fx=154.1548, fy=154.1548, cx=112, cy=112,
+                fx=fx, fy=fy, cx=cx, cy=cy,
             )
 
             B, C_, Hf, Wf = vis_feat.shape
@@ -341,7 +354,13 @@ def main():
     print("\n[CHECK] Evaluating hash collisions in infer mode for each environment...")
     for env_name, grid in grids.items():
         sparse_data = grid.export_sparse()
-        infer_grid = VoxelHashTable(mode="infer", sparse_data=sparse_data, device=DEVICE)
+        infer_grid = VoxelHashTable(
+            mode="infer", 
+            sparse_data=sparse_data, 
+            device=DEVICE,
+            feature_dim=GRID_FEAT_DIM,
+            hash_table_size=HASH_TABLE_SIZE
+        )
         stats = infer_grid.collision_stats()
         print(f"  [Infer] {env_name}:")
         for level_name, stat in stats.items():

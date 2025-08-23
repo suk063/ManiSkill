@@ -41,14 +41,13 @@ class TableScanEnv(BaseEnv):
     cube_spawn_half_size = 0.1
     cube_spawn_center = (0, 0)
         
-    CAM_RADII = [0.2, 0.3, 0.4]
-    VIEW_HEIGHTS = [0.05, 0.1, 0.2, 0.3, 0.5, 0.7]
-    CAM_SPEED  = np.deg2rad(1) # rad / sim-step (≈115 °/s at 60 Hz)
+    CAM_RADII = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    VIEW_HEIGHTS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     ANGLE_STEP_DEG = 10
     ANGLE_STEP_RAD = np.deg2rad(ANGLE_STEP_DEG)
 
-    MIN_TILT_DEG = 20          # when cam is at min height
-    MAX_TILT_DEG = 40         # when cam is at max height
+    MIN_TILT_DEG = 15          # when cam is at min height
+    MAX_TILT_DEG = 75         # when cam is at max height
 
     THETA_MIN    = np.deg2rad(-150)
     THETA_MAX    = np.deg2rad( 150)
@@ -156,7 +155,7 @@ class TableScanEnv(BaseEnv):
     def _load_scene(self, options: Dict):
         self.table_scene = TableSceneBuilder(env=self, custom_table=True, randomize_colors=False)
         self.table_scene.build()
-        self.table_center = [0, 0, self.table_scene.table_height/2]
+        self.table_center = [0, 0, 0.1]
         self.cam_mount = self.scene.create_actor_builder().build_kinematic("camera_mount")
         
         self._angle_idx  = 0
@@ -164,7 +163,6 @@ class TableScanEnv(BaseEnv):
         self._theta_min  = self.THETA_MIN
         self._theta_max  = self.THETA_MAX
         self._cam_theta  = self._theta_min         
-        self._cam_speed  = self.CAM_SPEED
 
         self._h_idx      = 0
         self._r_idx      = 0

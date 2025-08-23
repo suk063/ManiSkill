@@ -54,7 +54,7 @@ class PickYCBSequentialEnv(BaseEnv):
         
         # These are for clutter environment where all the objects will appear in all parallel environment
         
-        self.object_heights = {
+        self.object_heights_half = {
             "013_apple": 0.035,
             "014_lemon": 0.025,
             "002_master_chef_can": 0.05,
@@ -79,7 +79,7 @@ class PickYCBSequentialEnv(BaseEnv):
         self.target_model_ids = ["013_apple", "014_lemon"]
         target_model_xy = [[0.0, -0.1], [0.0, 0.1]]
         self.target_model_poses = [
-            sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
+            sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
         ]
 
@@ -96,7 +96,7 @@ class PickYCBSequentialEnv(BaseEnv):
             [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], [0.12, 0], [-0.15, -0.21], [-0.44, 0.6], [-0.49, -0.64]
         ]
         self.clutter_model_poses = [
-            sapien.Pose(p=[xy[0], xy[1], self.object_heights[model_id]])
+            sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.clutter_model_ids, clutter_model_xy)
         ]
         
@@ -104,7 +104,10 @@ class PickYCBSequentialEnv(BaseEnv):
         self.model_ids = self.target_model_ids + self.clutter_model_ids
         self.model_poses = self.target_model_poses + self.clutter_model_poses
 
-        self.target_qpos = torch.from_numpy(np.array([0, 0.22, -1.23, 0, 1.01, 0, 0, 0, 0, 0, 0, 0]))
+        self.target_qpos = torch.tensor(
+            [0, 0.22, -1.23, 0, 1.01, 0, 0, 0, 0, 0, 0, 0],
+            dtype=torch.float32
+        )
 
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
     
@@ -213,15 +216,28 @@ class PickYCBSequentialEnv(BaseEnv):
         half_height_2 = float(self.model_poses[obj_idx_2].p[2])
 
         for i in range(self.num_envs):
-            self.env_target_obj_idx_1[i] = obj_idx_1
-            self.env_target_obj_half_height_1[i] = half_height_1
-            env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]
-            pick_objs_1.append(env_ycb_obj_1)
-            
-            self.env_target_obj_idx_2[i] = obj_idx_2
-            self.env_target_obj_half_height_2[i] = half_height_2
-            env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]
-            pick_objs_2.append(env_ycb_obj_2)
+            # Even envs: lemon -> apple
+            if i % 2 == 0:
+                self.env_target_obj_idx_1[i] = obj_idx_2
+                self.env_target_obj_half_height_1[i] = half_height_2
+                env_ycb_obj_1 = all_ycb_objects[i][obj_idx_2]
+                pick_objs_1.append(env_ycb_obj_1)
+                
+                self.env_target_obj_idx_2[i] = obj_idx_1
+                self.env_target_obj_half_height_2[i] = half_height_1
+                env_ycb_obj_2 = all_ycb_objects[i][obj_idx_1]
+                pick_objs_2.append(env_ycb_obj_2)
+            # Odd envs: apple -> lemon
+            else:
+                self.env_target_obj_idx_1[i] = obj_idx_1
+                self.env_target_obj_half_height_1[i] = half_height_1
+                env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]
+                pick_objs_1.append(env_ycb_obj_1)
+                
+                self.env_target_obj_idx_2[i] = obj_idx_2
+                self.env_target_obj_half_height_2[i] = half_height_2
+                env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]
+                pick_objs_2.append(env_ycb_obj_2)
         
         self.pick_obj_1 = Actor.merge(pick_objs_1, name="pick_obj_1")
         self.pick_obj_2 = Actor.merge(pick_objs_2, name="pick_obj_2")
@@ -336,6 +352,11 @@ class PickYCBSequentialEnv(BaseEnv):
             self.returned_to_start_flag = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         else:
             self.returned_to_start_flag[env_idx] = False
+
+        if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
+            self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        else:
+            self.stage1_done[env_idx] = False
     
     def _get_obs_extra(self, info: Dict):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
@@ -359,6 +380,10 @@ class PickYCBSequentialEnv(BaseEnv):
         return obs
 
     def evaluate(self):
+        if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
+            self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        prev_stage1_done = self.stage1_done.clone()
+
         z_margin = 0.01
 
         pos_obj_1 = self.pick_obj_1.pose.p
@@ -396,7 +421,8 @@ class PickYCBSequentialEnv(BaseEnv):
         is_robot_static = self.agent.is_static(0.2)
 
         success_1 = is_placed_in_basket_obj_1 & is_static_obj_1 & (~is_grasped_obj_1)
-        success_2 = success_1 & is_placed_in_basket_obj_2 & is_static_obj_2 & (~is_grasped_obj_2)
+        self.stage1_done = prev_stage1_done | success_1
+        success_2 = self.stage1_done & is_placed_in_basket_obj_2 & is_static_obj_2 & (~is_grasped_obj_2)
         
         success = success_2 & is_robot_static
 
@@ -406,6 +432,7 @@ class PickYCBSequentialEnv(BaseEnv):
         # self.robot_cumulative_force += robot_force
 
         return {
+            "prev_stage1_done": prev_stage1_done,
             "env_target_obj_idx_1": self.env_target_obj_idx_1,
             "env_target_obj_idx_2": self.env_target_obj_idx_2,
             "is_grasped_obj_1": is_grasped_obj_1,
@@ -436,6 +463,7 @@ class PickYCBSequentialEnv(BaseEnv):
         basket_top_target = basket_top_pos.clone()
         basket_top_target[:, 2] += 0.05  # slightly above the rim to encourage clearing the edge
 
+        prev_stage1_done = info["prev_stage1_done"]
  
         # Helper to apply monotonic update on a boolean mask
         def update_max(reward_vec: torch.Tensor, mask: torch.Tensor, candidate: torch.Tensor):
@@ -491,28 +519,35 @@ class PickYCBSequentialEnv(BaseEnv):
         cand = 13.0
         reward = update_max(reward, info["success_obj_1"], cand)
 
-        mask_prog1 = info["success_obj_1"]
+        mask_prog1 = prev_stage1_done | info["success_obj_1"]
 
         # =========================
         # Post-O1: Robot returns to initial pose
         # =========================
-        robot_qpos = self.agent.robot.get_qpos()
-        linf_err = torch.max(torch.abs(robot_qpos - self.target_qpos.to(self.device)), dim=1).values
-        
-        # Reward for returning to a neutral pose (up to +2)
-        return_to_start_reward = 2.0 * (1.0 - torch.tanh(5.0 * linf_err))
-        cand = 13.0 + return_to_start_reward
-        reward = update_max(reward, mask_prog1, cand)
+        # robot_qpos = self.agent.robot.get_qpos()  # [B, DoF]
+        # target_qpos = self.target_qpos.to(robot_qpos.device).to(robot_qpos.dtype)  # [DoF]
+        # diff = (robot_qpos - target_qpos).abs()  # [B, DoF]
+        # tol_val = max(float(self.robot_init_qpos_noise), 1e-6)
+        # tol = torch.tensor(tol_val, device=diff.device, dtype=diff.dtype)
+        # linf_err_soft = tol * torch.logsumexp(diff / tol, dim=1)  # [B]
+        # k = torch.atanh(torch.tensor(0.5, device=diff.device, dtype=diff.dtype)) / tol
+        # return_to_start_reward = 2.0 * (1.0 - torch.tanh(k * linf_err_soft))
 
-        prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        
-        # Gate for starting Object 2 task
-        # Update the flag if the condition is met. Once true, it stays true.
-        self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & (linf_err < self.robot_init_qpos_noise))
+        # --- Gate to start Object 2 task ---
+        # linf_err_hard = diff.max(dim=1).values   # [B]
+        # near_home_and_slow = (linf_err_hard <= tol) & (v_norm <= 0.1)
 
-        just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
-        cand = 16.0
-        reward = update_max(reward, just_returned_to_start, cand)
+        # v_norm = torch.linalg.norm(self.agent.robot.get_qvel(), dim=1)         # [B]
+        # robot_static_reward = 1.0 - torch.tanh(5.0 * v_norm)  # [0, 1)
+        # cand = 13.0 + robot_static_reward
+        # reward = update_max(reward, mask_prog1, cand)
+
+        # prev_returned_to_start_flag = self.returned_to_start_flag.clone()
+        # self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & (v_norm <= 0.02))
+
+        # just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
+        # cand = 14.0
+        # reward = update_max(reward, just_returned_to_start, cand)
 
         # =========================
         # Object 2: Reach -> Grasp -> Lift -> Approach -> Enter -> Place (gated by obj1 progress)
@@ -521,24 +556,24 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_pos_2 = self.pick_obj_2.pose.p
         obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
         reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2))
-        cand = 16.0 + reach_obj_2_reward
-        reward = update_max(reward, self.returned_to_start_flag, cand)
+        cand = 13.0 + reach_obj_2_reward
+        reward = update_max(reward, mask_prog1, cand)
 
         # 2. Grasp reward
-        is_grasped_2 = self.returned_to_start_flag & info["is_grasped_obj_2"]
-        cand = 21.0
+        is_grasped_2 = mask_prog1 & info["is_grasped_obj_2"]
+        cand = 18.0
         reward = update_max(reward, is_grasped_2, cand)
 
         # 3. Lift reward
         obj_bottom_z_2 = obj_pos_2[..., 2] - self.env_target_obj_half_height_2
         lifted_2 = is_grasped_2 & (obj_bottom_z_2 >= 0.01)
-        cand = 22.0
+        cand = 19.0
         reward = update_max(reward, lifted_2, cand)
 
         # 4. Approach basket top for O2 (while grasped)
         obj_to_basket_top_dist_2 = torch.linalg.norm(basket_top_target - obj_pos_2, dim=1)
         reach_basket_top_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_top_dist_2)
-        cand = 22.0 + 3.0 * reach_basket_top_reward_2
+        cand = 19.0 + 3.0 * reach_basket_top_reward_2
         reward = update_max(reward, lifted_2, cand)
 
         # 5. Enter basket for O2
@@ -547,19 +582,19 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos_2 - obj_pos_2, dim=1)
         reach_inside_basket_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_2)
         mask_e2 = lifted_2 & info["is_entering_basket_obj_2"]
-        cand = 25.0 + reach_inside_basket_reward_2
+        cand = 22.0 + reach_inside_basket_reward_2
         reward = update_max(reward, mask_e2, cand)
 
         # 6. Place inside basket for O2 (ungrasp + static)
         v2 = torch.linalg.norm(self.pick_obj_2.linear_velocity, dim=1)
         av2 = torch.linalg.norm(self.pick_obj_2.angular_velocity, dim=1)
         static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
-        cand = 26.0 + static_reward_2
-        placed_mask_2 = self.returned_to_start_flag & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
+        cand = 23.0 + static_reward_2
+        placed_mask_2 = mask_prog1 & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
         reward = update_max(reward, placed_mask_2, cand)
 
         # 7. object 2 is placed in basket reward
-        cand = 29.0
+        cand = 26.0
         reward = update_max(reward, info["success_obj_2"], cand)
 
         # =========================
@@ -572,19 +607,19 @@ class PickYCBSequentialEnv(BaseEnv):
         reach_basket_top_reward = 1.0 - torch.tanh(5.0 * tcp_to_basket_top_dist)
 
         final_state = (
-            info["success_obj_1"]
+            mask_prog1
             & info["is_placed_in_basket_obj_2"]
             & info["is_static_obj_2"]
             & (~info["is_grasped_obj_2"])
         )
         final_state_reward = robot_static_reward + reach_basket_top_reward
-        cand = 29.0 + final_state_reward
+        cand = 26.0 + final_state_reward
         reward = update_max(reward, final_state, cand)
 
         # =========================
         # Success bonus
         # =========================
-        reward_success = torch.full_like(reward, 32.0)
+        reward_success = torch.full_like(reward, 30.0)
         reward = update_max(reward, info["success"], reward_success)
         return reward
 
@@ -593,4 +628,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 32.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 30.0
