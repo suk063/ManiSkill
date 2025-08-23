@@ -266,11 +266,11 @@ if __name__ == "__main__":
 
         print(f"Loading {total_envs} maps from {args.map_dir} ...")
         for i in range(total_envs):
-            grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.pt")
+            grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.sparse.pt")
             if not os.path.exists(grid_path):
                 print(f"[ERROR] Map file not found: {grid_path}. Exiting.")
                 exit()
-            all_grids.append(VoxelHashTable.load_dense(grid_path, device=device))
+            all_grids.append(VoxelHashTable.load_sparse(grid_path, device=device))
         print(f"--- Loaded {len(all_grids)} maps. ---")
 
         # Freeze any grid parameters to avoid accidental training
@@ -309,7 +309,7 @@ if __name__ == "__main__":
 
     # env setup
     env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", camera_uids=args.camera_uids)
-    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", total_envs=args.total_envs)
+    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", total_envs=args.total_envs)
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
@@ -455,7 +455,7 @@ if __name__ == "__main__":
         # Resample subset of environments for this epoch (train)
         # --------------------------------------------------------------
         # Resample next training subset using GridSampler
-        train_map_features = iteration >= args.map_start_iteration
+        use_map_features = iteration >= args.map_start_iteration
         active_indices, grids = grid_sampler.sample()
         if not args.use_map:
             grids = None
@@ -530,7 +530,7 @@ if __name__ == "__main__":
                         map_features=online_eval_grids if args.use_map else None,
                         env_target_obj_idx=eval_target_obj_idx,
                         deterministic=True,
-                        train_map_features=train_map_features
+                        use_map_features=use_map_features
                     )
                 
                 eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
@@ -593,7 +593,7 @@ if __name__ == "__main__":
                     next_obs,
                     map_features=online_grids if args.use_online_mapping else grids,
                     env_target_obj_idx=next_env_target_obj_idx,
-                    train_map_features=train_map_features
+                    use_map_features=use_map_features
                 )
                 values[step] = value.flatten()
             actions[step] = action
@@ -647,7 +647,7 @@ if __name__ == "__main__":
                             final_obs,
                             map_features=final_grids,
                             env_target_obj_idx=final_env_target_obj_idx,
-                            train_map_features=train_map_features
+                            use_map_features=use_map_features
                         ).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
@@ -662,7 +662,7 @@ if __name__ == "__main__":
                 next_obs,
                 map_features=online_grids if args.use_online_mapping else grids,
                 env_target_obj_idx=next_env_target_obj_idx,
-                train_map_features=train_map_features
+                use_map_features=use_map_features
             ).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
@@ -733,7 +733,7 @@ if __name__ == "__main__":
                     map_features=mb_grids,
                     env_target_obj_idx=b_env_target_obj_idxs[mb_inds],
                     action=b_actions[mb_inds],
-                    train_map_features=train_map_features
+                    use_map_features=use_map_features
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()

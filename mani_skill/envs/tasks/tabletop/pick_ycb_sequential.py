@@ -328,18 +328,15 @@ class PickYCBSequentialEnv(BaseEnv):
             rand_rot_b      = z_rot_quats[:, obj_idx, :]                   # [b, 4]
             final_orients_b = quaternion_multiply(rand_rot_b, base_orients_b)  # [b, 4]
 
-            # 2) Grab full-batch buffers (clone to avoid view/readonly issues)
-            full_p = obj.pose.p.clone()   # [N, 3], same device/dtype as the engine
-            full_q = obj.pose.q.clone()   # [N, 4]
+            # 2) Get the full pose buffers.
+            full_p = obj.pose.p
+            full_q = obj.pose.q
 
-            # 3) Replace only at env_idx (env_idx must be a Long tensor)
-            full_p[env_idx] = obj_positions_b.to(full_p.dtype)
-            full_q[env_idx] = final_orients_b.to(full_q.dtype)
+            # 3) Replace poses only at env_idx.
+            full_p[env_idx] = obj_positions_b
+            full_q[env_idx] = final_orients_b
 
-            # (Optional) Normalize quaternions to counter numerical errors
-            full_q = full_q / (full_q.norm(dim=1, keepdim=True) + 1e-12)
-
-            # 4) Apply poses for the whole batch
+            # 4) Apply poses for the whole batch using the updated full pose buffers.
             obj.set_pose(Pose.create_from_pq(full_p, full_q))
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):

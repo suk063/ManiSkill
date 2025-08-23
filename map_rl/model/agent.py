@@ -70,7 +70,7 @@ class FeatureExtractor(nn.Module):
 
             if self.use_local_fusion:
                 self.map_feature_proj = nn.Linear(map_raw_dim, self.vision_encoder.embed_dim)
-                self.local_fusion = LocalFeatureFusion(dim=self.vision_encoder.embed_dim, k=1, radius=0.12, num_layers=1)
+                self.local_fusion = LocalFeatureFusion(dim=self.vision_encoder.embed_dim, k=2, radius=0.06, num_layers=1)
 
         # --------------------------------------------------------------- State
         self.state_proj = None
@@ -148,7 +148,7 @@ class FeatureExtractor(nn.Module):
         observations: dict,
         map_features: Optional[List] = None,
         env_target_obj_idx: Optional[torch.Tensor] = None,
-        train_map_features: bool =False,
+        use_map_features: bool =False,
     ) -> torch.Tensor:
     
         B = observations["rgb"].size(0)
@@ -192,19 +192,20 @@ class FeatureExtractor(nn.Module):
 
         lengths = [c.size(0) for c in coords_batch]
         pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)  # (B, Lmax, 768)
+        coords_padded = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)
         Lmax = pad_3d.size(1)
 
         pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
                 torch.tensor(lengths, device=pad_3d.device)[:, None]
-        if train_map_features:
-            map_vec = self.map_encoder(pad_3d, pad_mask)
+        if use_map_features:
+            map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
         else:
             with torch.no_grad():
-                map_vec = self.map_encoder(pad_3d, pad_mask)
-            
+                map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
+
         encoded.append(map_vec)
         
-        if self.use_local_fusion and train_map_features:
+        if self.use_local_fusion and use_map_features:
             # Fuse each camera's image_fmap with the same map features
             fused_image_fmaps = []
             image_fmaps_per_cam = torch.chunk(image_fmap, self.num_cameras, dim=0)
@@ -286,15 +287,15 @@ class Agent(nn.Module):
 
     # Convenience helpers -----------------------------------------------------
 
-    def get_features(self, x, map_features=None, env_target_obj_idx=None, train_map_features: bool = True):
-        return self.feature_net(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
+    def get_features(self, x, map_features=None, env_target_obj_idx=None, use_map_features: bool = True):
+        return self.feature_net(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, use_map_features=use_map_features)
 
-    def get_value(self, x, map_features=None, env_target_obj_idx=None, train_map_features: bool = True):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
+    def get_value(self, x, map_features=None, env_target_obj_idx=None, use_map_features: bool = True):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, use_map_features=use_map_features)
         return self.critic(x)
 
-    def get_action(self, x, map_features=None, env_target_obj_idx=None, deterministic: bool = False, train_map_features: bool = True):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
+    def get_action(self, x, map_features=None, env_target_obj_idx=None, deterministic: bool = False, use_map_features: bool = True):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, use_map_features=use_map_features)
         action_mean = self.actor_mean(x)
         if deterministic:
             return action_mean
@@ -303,8 +304,8 @@ class Agent(nn.Module):
         probs = Normal(action_mean, action_std)
         return probs.sample()
 
-    def get_action_and_value(self, x, map_features=None, env_target_obj_idx=None, action=None, train_map_features: bool = True):
-        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, train_map_features=train_map_features)
+    def get_action_and_value(self, x, map_features=None, env_target_obj_idx=None, action=None, use_map_features: bool = True):
+        x = self.get_features(x, map_features=map_features, env_target_obj_idx=env_target_obj_idx, use_map_features=use_map_features)
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)

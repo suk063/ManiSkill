@@ -374,7 +374,9 @@ class TableSceneBuilder(SceneBuilder):
                     + qpos
                 )
             qpos[:, -2:] = 0.04
-            self.env.agent.reset(qpos)
+            full_qpos = self.env.agent.robot.get_qpos()
+            full_qpos[env_idx] = torch.from_numpy(qpos).to(full_qpos.device, dtype=full_qpos.dtype)
+            self.env.agent.reset(full_qpos)
             self.env.agent.robot.set_pose(sapien.Pose([-0.615, 0, 0]))
         elif self.env.robot_uids == "panda_wristcam":
             # fmt: off
@@ -397,7 +399,9 @@ class TableSceneBuilder(SceneBuilder):
                     + qpos
                 )
             qpos[:, -2:] = 0.04
-            self.env.agent.reset(qpos)
+            full_qpos = self.env.agent.robot.get_qpos()
+            full_qpos[env_idx] = torch.from_numpy(qpos).to(full_qpos.device, dtype=full_qpos.dtype)
+            self.env.agent.reset(full_qpos)
             self.env.agent.robot.set_pose(sapien.Pose([-0.615, 0, 0]))
         elif self.env.robot_uids in [
             "xarm6_allegro_left",
@@ -413,7 +417,9 @@ class TableSceneBuilder(SceneBuilder):
                 )
                 + qpos
             )
-            self.env.agent.reset(qpos)
+            full_qpos = self.env.agent.robot.get_qpos()
+            full_qpos[env_idx] = torch.from_numpy(qpos).to(full_qpos.device, dtype=full_qpos.dtype)
+            self.env.agent.reset(full_qpos)
             self.env.agent.robot.set_pose(sapien.Pose([-0.522, 0, 0]))
         elif self.env.robot_uids == "floating_robotiq_2f_85_gripper":
             qpos = self.env.agent.keyframes["open_facing_side"].qpos
@@ -423,7 +429,9 @@ class TableSceneBuilder(SceneBuilder):
                 )
                 + qpos
             )
-            self.env.agent.reset(qpos)
+            full_qpos = self.env.agent.robot.get_qpos()
+            full_qpos[env_idx] = torch.from_numpy(qpos).to(full_qpos.device, dtype=full_qpos.dtype)
+            self.env.agent.reset(full_qpos)
             self.env.agent.robot.set_pose(sapien.Pose([-0.5, 0, 0.05]))
         elif self.env.robot_uids == "fetch":
             qpos = np.array(
@@ -445,7 +453,11 @@ class TableSceneBuilder(SceneBuilder):
                     0.015,
                 ]
             )
-            self.env.agent.reset(qpos)
+            full_qpos = self.env.agent.robot.get_qpos()
+            # For fetch, qpos is not batched, so we need to broadcast it
+            qpos_b = np.broadcast_to(qpos, (b, len(qpos)))
+            full_qpos[env_idx] = torch.from_numpy(qpos_b).to(full_qpos.device, dtype=full_qpos.dtype)
+            self.env.agent.reset(full_qpos)
             self.env.agent.robot.set_pose(sapien.Pose([-1.05, 0, -self.table_height]))
 
             self.ground.set_collision_group_bit(
@@ -481,11 +493,17 @@ class TableSceneBuilder(SceneBuilder):
                     + qpos
                 )
             qpos[:, -2:] = 0.04
-            agent.agents[1].reset(qpos)
+            
+            full_qpos_1 = agent.agents[1].robot.get_qpos()
+            full_qpos_1[env_idx] = torch.from_numpy(qpos).to(full_qpos_1.device, dtype=full_qpos_1.dtype)
+            agent.agents[1].reset(full_qpos_1)
             agent.agents[1].robot.set_pose(
                 sapien.Pose([0, 0.75, 0], q=euler2quat(0, 0, -np.pi / 2))
             )
-            agent.agents[0].reset(qpos)
+
+            full_qpos_0 = agent.agents[0].robot.get_qpos()
+            full_qpos_0[env_idx] = torch.from_numpy(qpos).to(full_qpos_0.device, dtype=full_qpos_0.dtype)
+            agent.agents[0].reset(full_qpos_0)
             agent.agents[0].robot.set_pose(
                 sapien.Pose([0, -0.75, 0], q=euler2quat(0, 0, np.pi / 2))
             )
@@ -519,11 +537,17 @@ class TableSceneBuilder(SceneBuilder):
                     + qpos
                 )
             qpos[:, -2:] = 0.04
-            agent.agents[1].reset(qpos)
+
+            full_qpos_1 = agent.agents[1].robot.get_qpos()
+            full_qpos_1[env_idx] = torch.from_numpy(qpos).to(full_qpos_1.device, dtype=full_qpos_1.dtype)
+            agent.agents[1].reset(full_qpos_1)
             agent.agents[1].robot.set_pose(
                 sapien.Pose([0, 0.75, 0], q=euler2quat(0, 0, -np.pi / 2))
             )
-            agent.agents[0].reset(qpos)
+
+            full_qpos_0 = agent.agents[0].robot.get_qpos()
+            full_qpos_0[env_idx] = torch.from_numpy(qpos).to(full_qpos_0.device, dtype=full_qpos_0.dtype)
+            agent.agents[0].reset(full_qpos_0)
             agent.agents[0].robot.set_pose(
                 sapien.Pose([0, -0.75, 0], q=euler2quat(0, 0, np.pi / 2))
             )
@@ -560,11 +584,16 @@ class TableSceneBuilder(SceneBuilder):
                     )
                     + qpos
                 )
-            self.env.agent.reset(qpos)
+            full_qpos = self.env.agent.robot.get_qpos()
+            full_qpos[env_idx] = torch.from_numpy(qpos).to(full_qpos.device, dtype=full_qpos.dtype)
+            self.env.agent.reset(full_qpos)
             self.env.agent.robot.set_pose(sapien.Pose([-0.615, 0, 0]))
         elif self.env.robot_uids in ["widowxai", "widowxai_wristcam"]:
             qpos = self.env.agent.keyframes["ready_to_grasp"].qpos
-            self.env.agent.reset(qpos)
+            full_qpos = self.env.agent.robot.get_qpos()
+            qpos_b = np.broadcast_to(qpos, (b, len(qpos)))
+            full_qpos[env_idx] = torch.from_numpy(qpos_b).to(full_qpos.device, dtype=full_qpos.dtype)
+            self.env.agent.reset(full_qpos)
         elif self.env.robot_uids == "so100":
             qpos = np.array([0, np.pi / 2, np.pi / 2, np.pi / 2, -np.pi / 2, 1.0])
             qpos = (
@@ -573,7 +602,9 @@ class TableSceneBuilder(SceneBuilder):
                 )
                 + qpos
             )
-            self.env.agent.reset(qpos)
+            full_qpos = self.env.agent.robot.get_qpos()
+            full_qpos[env_idx] = torch.from_numpy(qpos).to(full_qpos.device, dtype=full_qpos.dtype)
+            self.env.agent.reset(full_qpos)
             self.env.agent.robot.set_pose(
                 sapien.Pose([-0.725, 0, 0], q=euler2quat(0, 0, np.pi / 2))
             )

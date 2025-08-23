@@ -3,8 +3,8 @@ from collections import defaultdict
 import os
 import random
 import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, List
 
 import gymnasium as gym
 import numpy as np
@@ -80,6 +80,9 @@ class Args:
     """the control mode to use for the environment"""
     total_envs: int = 100
     """Total number of discrete environments available for sampling with global_idx"""
+    # task specification
+    model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon"])
+    """the list of model ids to use for the environment"""
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.8
@@ -119,6 +122,8 @@ class Args:
     """the mini-batch size (computed in runtime)"""
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
+    num_tasks: int = 0
+    """the number of tasks (computed in runtime)"""
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -188,7 +193,7 @@ class GridSampler:
         return indices, None
 
 class NatureCNN(nn.Module):
-    def __init__(self, sample_obs):
+    def __init__(self, sample_obs, num_tasks: int = 0):
         super().__init__()
 
         extractors = {}
@@ -233,23 +238,34 @@ class NatureCNN(nn.Module):
             extractors["state"] = nn.Linear(state_size, 256)
             self.out_features += 256
 
+        self.task_embedding = None
+        if num_tasks > 0:
+            self.task_embedding = nn.Embedding(num_tasks, feature_size)
+            self.out_features += feature_size
+
         self.extractors = nn.ModuleDict(extractors)
 
-    def forward(self, observations) -> torch.Tensor:
+    def forward(self, observations, env_target_obj_idx=None) -> torch.Tensor:
         encoded_tensor_list = []
         # self.extractors contain nn.Modules that do all the processing.
         for key, extractor in self.extractors.items():
             obs = observations[key]
             if key == "rgb":
                 obs = obs.float().permute(0,3,1,2)
-                obs = obs / 255
+                obs = obs / 255.0
             encoded_tensor_list.append(extractor(obs))
+        
+        if self.task_embedding is not None:
+            assert env_target_obj_idx is not None, "env_target_obj_idx must be provided for task embedding"
+            task_emb = self.task_embedding(env_target_obj_idx)
+            encoded_tensor_list.append(task_emb)
+
         return torch.cat(encoded_tensor_list, dim=1)
 
 class Agent(nn.Module):
-    def __init__(self, envs, sample_obs):
+    def __init__(self, envs, sample_obs, num_tasks: int = 0):
         super().__init__()
-        self.feature_net = NatureCNN(sample_obs=sample_obs)
+        self.feature_net = NatureCNN(sample_obs=sample_obs, num_tasks=num_tasks)
         # latent_size = np.array(envs.unwrapped.single_observation_space.shape).prod()
         latent_size = self.feature_net.out_features
         self.critic = nn.Sequential(
@@ -263,13 +279,16 @@ class Agent(nn.Module):
             layer_init(nn.Linear(512, np.prod(envs.unwrapped.single_action_space.shape)), std=0.01*np.sqrt(2)),
         )
         self.actor_logstd = nn.Parameter(torch.ones(1, np.prod(envs.unwrapped.single_action_space.shape)) * -0.5)
-    def get_features(self, x):
-        return self.feature_net(x)
-    def get_value(self, x):
-        x = self.feature_net(x)
+
+    def get_features(self, x, env_target_obj_idx=None):
+        return self.feature_net(x, env_target_obj_idx=env_target_obj_idx)
+
+    def get_value(self, x, env_target_obj_idx=None):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx)
         return self.critic(x)
-    def get_action(self, x, deterministic=False):
-        x = self.feature_net(x)
+
+    def get_action(self, x, env_target_obj_idx=None, deterministic=False):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx)
         action_mean = self.actor_mean(x)
         if deterministic:
             return action_mean
@@ -277,8 +296,9 @@ class Agent(nn.Module):
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         return probs.sample()
-    def get_action_and_value(self, x, action=None):
-        x = self.feature_net(x)
+
+    def get_action_and_value(self, x, env_target_obj_idx=None, action=None):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx)
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
@@ -303,6 +323,7 @@ if __name__ == "__main__":
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
+    args.num_tasks = len(args.model_ids)
     if args.exp_name is None:
         args.exp_name = os.path.basename(__file__)[: -len(".py")]
         run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -386,18 +407,22 @@ if __name__ == "__main__":
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    env_target_obj_idxs = torch.zeros((args.num_steps, args.num_envs), dtype=torch.long).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, _ = envs.reset(seed=args.seed, options={"global_idx": active_indices.tolist()})
-    eval_obs, _ = eval_envs.reset(seed=args.seed, options={"global_idx": eval_indices.tolist()})
+    next_obs, infos = envs.reset(seed=args.seed, options={"global_idx": active_indices.tolist()})
+    next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
+    next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']
+    next_success_obj_1 = infos['success_obj_1']
+    eval_obs, eval_infos = eval_envs.reset(seed=args.seed, options={"global_idx": eval_indices.tolist()})
     next_done = torch.zeros(args.num_envs, device=device)
     print(f"####")
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
     print(f"args.minibatch_size={args.minibatch_size} args.batch_size={args.batch_size} args.update_epochs={args.update_epochs}")
     print(f"####")
-    agent = Agent(envs, sample_obs=next_obs).to(device)
+    agent = Agent(envs, sample_obs=next_obs, num_tasks=args.num_tasks).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     if args.checkpoint:
@@ -408,7 +433,10 @@ if __name__ == "__main__":
     for iteration in range(1, args.num_iterations + 1):
         # Resample training subset each iteration and reset with global_idx
         active_indices, _ = grid_sampler.sample()
-        next_obs, _ = envs.reset(options={"global_idx": active_indices.tolist()})
+        next_obs, infos = envs.reset(options={"global_idx": active_indices.tolist()})
+        next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
+        next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']
+        next_success_obj_1 = infos['success_obj_1']
         next_done = torch.zeros(args.num_envs, device=device)
         print(f"Epoch: {iteration}, global_step={global_step}")
         final_values = torch.zeros((args.num_steps, args.num_envs), device=device)
@@ -416,12 +444,18 @@ if __name__ == "__main__":
         if iteration % args.eval_freq == 1:
             print("Evaluating")
             stime = time.perf_counter()
-            eval_obs, _ = eval_envs.reset(options={"global_idx": eval_indices.tolist()})
+            eval_obs, eval_infos = eval_envs.reset(options={"global_idx": eval_indices.tolist()})
             eval_metrics = defaultdict(list)
             num_episodes = 0
             for _ in range(args.num_eval_steps):
                 with torch.no_grad():
-                    eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(agent.get_action(eval_obs, deterministic=True))
+                    eval_target_obj_idx = torch.where(
+                        eval_infos['success_obj_1'], 
+                        eval_infos['env_target_obj_idx_2'], 
+                        eval_infos['env_target_obj_idx_1']
+                    )
+                    action = agent.get_action(eval_obs, env_target_obj_idx=eval_target_obj_idx, deterministic=True)
+                    eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
                     if "final_info" in eval_infos:
                         mask = eval_infos["_final_info"]
                         num_episodes += mask.sum()
@@ -453,16 +487,25 @@ if __name__ == "__main__":
             global_step += args.num_envs
             obs[step] = next_obs
             dones[step] = next_done
+            next_env_target_obj_idx = torch.where(
+                next_success_obj_1,
+                next_env_target_obj_idx_2,
+                next_env_target_obj_idx_1
+            )
+            env_target_obj_idxs[step] = next_env_target_obj_idx
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
+                action, logprob, _, value = agent.get_action_and_value(next_obs, env_target_obj_idx=next_env_target_obj_idx)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action)
+            next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
+            next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']
+            next_success_obj_1 = infos['success_obj_1']
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)
             rewards[step] = reward.view(-1) * args.reward_scale
 
@@ -472,15 +515,37 @@ if __name__ == "__main__":
                 for k, v in final_info["episode"].items():
                     logger.add_scalar(f"train/{k}", v[done_mask].float().mean(), global_step)
 
-                for k in infos["final_observation"]:
-                    infos["final_observation"][k] = infos["final_observation"][k][done_mask]
+                final_obs = infos["final_observation"]
+                def _slice(o):
+                    if isinstance(o, dict):
+                        return {kk: _slice(vv) for kk, vv in o.items()}
+                    elif torch.is_tensor(o):
+                        return o[done_mask]
+                    else:
+                        # assume numpy array or list convertible to tensor indexing
+                        return o[done_mask]
+                final_obs = _slice(final_obs)
                 with torch.no_grad():
-                    final_values[step, torch.arange(args.num_envs, device=device)[done_mask]] = agent.get_value(infos["final_observation"]).view(-1)
+                    idx = torch.arange(args.num_envs, device=device)[done_mask]
+                    if len(idx) > 0:
+                        final_env_target_obj_idx = torch.where(
+                            final_info['success_obj_1'][done_mask],
+                            final_info['env_target_obj_idx_2'][done_mask],
+                            final_info['env_target_obj_idx_1'][done_mask]
+                        )
+                        final_values[step, idx] = agent.get_value(
+                            final_obs, env_target_obj_idx=final_env_target_obj_idx
+                        ).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
         # bootstrap value according to termination and truncation
         with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
+            next_env_target_obj_idx = torch.where(
+                next_success_obj_1,
+                next_env_target_obj_idx_2,
+                next_env_target_obj_idx_1
+            )
+            next_value = agent.get_value(next_obs, env_target_obj_idx=next_env_target_obj_idx).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -528,6 +593,7 @@ if __name__ == "__main__":
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
+        b_env_target_obj_idxs = env_target_obj_idxs.reshape(-1)
 
         # Optimizing the policy and value network
         agent.train()
@@ -540,7 +606,11 @@ if __name__ == "__main__":
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(
+                    b_obs[mb_inds],
+                    env_target_obj_idx=b_env_target_obj_idxs[mb_inds],
+                    action=b_actions[mb_inds]
+                )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -616,4 +686,5 @@ if __name__ == "__main__":
         print(f"model saved to {model_path}")
 
     envs.close()
+    eval_envs.close()
     if logger is not None: logger.close()
