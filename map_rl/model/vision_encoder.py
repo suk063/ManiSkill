@@ -22,7 +22,7 @@ class DINO2DFeatureEncoder(nn.Module):
         self.backbone = torch.hub.load("facebookresearch/dinov2", model_name)
         # self.backbone = torch.hub.load('dinov3', 'dinov3_vits16', source='local', weights=WEIIGHT_PATH)
         self.dino_output_dim = 384
-        self.dino_proj = nn.Sequential(
+        self.dino_head = nn.Sequential(
             nn.Conv2d(self.dino_output_dim, 64, kernel_size=1, bias=False),
             nn.GroupNorm(1, 64),  # Equivalent to LayerNorm for channels
             nn.GELU(),
@@ -69,7 +69,7 @@ class DINO2DFeatureEncoder(nn.Module):
         C = self.dino_output_dim
         Hf, Wf = H // 14, W // 14
         fmap = tokens.permute(0, 2, 1).reshape(B, C, Hf, Wf).contiguous()
-        fmap = self.dino_proj(fmap)
+        fmap = self.dino_head(fmap)
         
         return fmap
 
