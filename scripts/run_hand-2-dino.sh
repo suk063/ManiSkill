@@ -40,4 +40,4 @@ run_cfg dino-map-local-fusion-hand-cam-2-stage \
   --map_start_iteration=10000000 \
   --camera_uids=hand_camera \
   --freeze_dino_backbone \
-  # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-hand-cam/ckpt_latest.pt \
+  # --checkpoint=runs/PickYCB_xarm6_ppo__dino-map-local-fusion-hand-cam-2-stage/ckpt_latest.pt \
