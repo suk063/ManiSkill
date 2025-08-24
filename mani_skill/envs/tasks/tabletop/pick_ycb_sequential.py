@@ -176,7 +176,7 @@ class PickYCBSequentialEnv(BaseEnv):
 
         # Create ALL 5 YCB objects for EACH environment
         # Each environment gets its own set of 5 YCB objects
-        all_ycb_objects = []
+        self.all_ycb_objects = []
         for env_i in range(self.num_envs):
             env_ycb_objects = []
             for model_i, model_id in enumerate(self.model_ids):
@@ -187,60 +187,15 @@ class PickYCBSequentialEnv(BaseEnv):
                 builder.initial_pose = sapien.Pose(p=[0, 0, 0.1 * (model_i + 1)])
 
                 env_ycb_objects.append(builder.build(name=f"ycb_{model_id}_env_{env_i}"))
-            all_ycb_objects.append(env_ycb_objects)
+            self.all_ycb_objects.append(env_ycb_objects)
         
-        # Create 5 merged actors, each representing one type of YCB object across all environments
         self.ycb_objects = []
         for obj_idx in range(len(self.model_ids)):
             obj_type_actors = []
             for env_i in range(self.num_envs):
-                obj_type_actors.append(all_ycb_objects[env_i][obj_idx])
+                obj_type_actors.append(self.all_ycb_objects[env_i][obj_idx])
             merged_actor = Actor.merge(obj_type_actors, name=f"ycb_{self.model_ids[obj_idx]}")
             self.ycb_objects.append(merged_actor)
-        
-        # Create pick_obj as a merged actor representing the pick objects for all environments
-        pick_objs_1 = []
-        pick_objs_2 = []
-        self.env_target_obj_idx_1 = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
-        self.env_target_obj_idx_2 = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
-        self.env_target_obj_half_height_1 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
-        self.env_target_obj_half_height_2 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
-
-        model_id_1 = "013_apple"
-        model_id_2 = "014_lemon"
-
-        obj_idx_1 = self.model_ids.index(model_id_1)
-        obj_idx_2 = self.model_ids.index(model_id_2)
-
-        half_height_1 = float(self.model_poses[obj_idx_1].p[2])
-        half_height_2 = float(self.model_poses[obj_idx_2].p[2])
-
-        for i in range(self.num_envs):
-            # Even envs: lemon -> apple
-            if i % 2 == 0:
-                self.env_target_obj_idx_1[i] = obj_idx_2
-                self.env_target_obj_half_height_1[i] = half_height_2
-                env_ycb_obj_1 = all_ycb_objects[i][obj_idx_2]
-                pick_objs_1.append(env_ycb_obj_1)
-                
-                self.env_target_obj_idx_2[i] = obj_idx_1
-                self.env_target_obj_half_height_2[i] = half_height_1
-                env_ycb_obj_2 = all_ycb_objects[i][obj_idx_1]
-                pick_objs_2.append(env_ycb_obj_2)
-            # Odd envs: apple -> lemon
-            else:
-                self.env_target_obj_idx_1[i] = obj_idx_1
-                self.env_target_obj_half_height_1[i] = half_height_1
-                env_ycb_obj_1 = all_ycb_objects[i][obj_idx_1]
-                pick_objs_1.append(env_ycb_obj_1)
-                
-                self.env_target_obj_idx_2[i] = obj_idx_2
-                self.env_target_obj_half_height_2[i] = half_height_2
-                env_ycb_obj_2 = all_ycb_objects[i][obj_idx_2]
-                pick_objs_2.append(env_ycb_obj_2)
-        
-        self.pick_obj_1 = Actor.merge(pick_objs_1, name="pick_obj_1")
-        self.pick_obj_2 = Actor.merge(pick_objs_2, name="pick_obj_2")
         
     def _initialize_ycb_objects(self, env_idx: torch.Tensor, options: dict = None):
         b = len(env_idx)
@@ -340,6 +295,54 @@ class PickYCBSequentialEnv(BaseEnv):
             obj.set_pose(Pose.create_from_pq(full_p, full_q))
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
+        # Randomly assign apple/lemon as the first/second object to pick for each episode
+        if not hasattr(self, "pick_orders"):
+            self.pick_orders = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        
+        # For the environments being reset, generate a new random order
+        self.pick_orders[env_idx] = torch.randint(0, 2, (len(env_idx),), device=self.device)
+
+        model_id_1 = "013_apple"
+        model_id_2 = "014_lemon"
+
+        obj_idx_1 = self.model_ids.index(model_id_1)
+        obj_idx_2 = self.model_ids.index(model_id_2)
+
+        half_height_1 = float(self.model_poses[obj_idx_1].p[2])
+        half_height_2 = float(self.model_poses[obj_idx_2].p[2])
+
+        if not hasattr(self, "env_target_obj_idx_1"):
+            self.env_target_obj_idx_1 = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
+            self.env_target_obj_idx_2 = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
+            self.env_target_obj_half_height_1 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+            self.env_target_obj_half_height_2 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+
+        pick_objs_1 = []
+        pick_objs_2 = []
+        for i in range(self.num_envs):
+            # pick_orders[i] == 0: apple -> lemon
+            # pick_orders[i] == 1: lemon -> apple
+            is_apple_first = self.pick_orders[i] == 0
+            if is_apple_first:
+                self.env_target_obj_idx_1[i] = obj_idx_1
+                self.env_target_obj_half_height_1[i] = half_height_1
+                pick_objs_1.append(self.all_ycb_objects[i][obj_idx_1])
+                
+                self.env_target_obj_idx_2[i] = obj_idx_2
+                self.env_target_obj_half_height_2[i] = half_height_2
+                pick_objs_2.append(self.all_ycb_objects[i][obj_idx_2])
+            else: # lemon first
+                self.env_target_obj_idx_1[i] = obj_idx_2
+                self.env_target_obj_half_height_1[i] = half_height_2
+                pick_objs_1.append(self.all_ycb_objects[i][obj_idx_2])
+                
+                self.env_target_obj_idx_2[i] = obj_idx_1
+                self.env_target_obj_half_height_2[i] = half_height_1
+                pick_objs_2.append(self.all_ycb_objects[i][obj_idx_1])
+        
+        self.pick_obj_1 = Actor.merge(pick_objs_1, name="pick_obj_1")
+        self.pick_obj_2 = Actor.merge(pick_objs_2, name="pick_obj_2")
+        
         # if not hasattr(self, "robot_cumulative_force"):
         #     self.robot_cumulative_force = torch.zeros(self.num_envs, device=self.device)
         self.table_scene.initialize(env_idx)
