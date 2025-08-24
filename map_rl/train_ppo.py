@@ -621,7 +621,7 @@ if __name__ == "__main__":
                 done_mask = infos["_final_info"]
                 for k, v in final_info["episode"].items():
                     if logger is not None:
-                        logger.add_scalar(f"train/{k}", v[done_mask].float().mean(), global_step)
+                        logger.add_scalar(f"train/{k}", v.float().mean(), global_step)
 
                 # Slice final observations for environments that terminated
                 final_obs = infos["final_observation"]
