@@ -548,8 +548,8 @@ class PickYCBSequentialEnv(BaseEnv):
         # 1. Reach object 2 (dense) - now gated by return to start
         obj_pos_2 = torch.where(pick_order_0_mask, self.target_actors[1].pose.p, self.target_actors[0].pose.p)
         obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
-        reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2))
-        cand = 13.0 + reach_obj_2_reward + return_to_start_reward
+        reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2)) + return_to_start_reward
+        cand = 13.0 + reach_obj_2_reward
         reward = update_max(reward, mask_prog1, cand)
 
         # 2. Grasp reward
