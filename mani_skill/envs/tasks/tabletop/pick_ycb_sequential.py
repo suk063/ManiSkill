@@ -296,8 +296,10 @@ class PickYCBSequentialEnv(BaseEnv):
             full_p[env_idx] = obj_positions_b
             full_q[env_idx] = final_orients_b
 
-            # 4) Apply poses for the whole batch using the updated full pose buffers.
-            obj.set_pose(Pose.create_from_pq(full_p, full_q))
+            # 4) Apply poses only for the environments being reset, in ascending env order
+            #    to align with the internal boolean reset mask ordering.
+            env_idx_sorted, _ = torch.sort(env_idx)
+            obj.set_pose(Pose.create_from_pq(full_p[env_idx_sorted], full_q[env_idx_sorted]))
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         # Randomly assign the order of target objects to pick for each episode
