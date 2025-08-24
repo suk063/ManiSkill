@@ -196,6 +196,11 @@ class PickYCBSequentialEnv(BaseEnv):
                 obj_type_actors.append(self.all_ycb_objects[env_i][obj_idx])
             merged_actor = Actor.merge(obj_type_actors, name=f"ycb_{self.model_ids[obj_idx]}")
             self.ycb_objects.append(merged_actor)
+
+        # Create stable handles to target actors based on the order in `target_model_ids`
+        self.target_obj_indices = [self.model_ids.index(model_id) for model_id in self.target_model_ids]
+        self.target_actors = [self.ycb_objects[i] for i in self.target_obj_indices]
+        self.target_half_heights = [float(self.model_poses[i].p[2]) for i in self.target_obj_indices]
         
     def _initialize_ycb_objects(self, env_idx: torch.Tensor, options: dict = None):
         b = len(env_idx)
@@ -295,56 +300,26 @@ class PickYCBSequentialEnv(BaseEnv):
             obj.set_pose(Pose.create_from_pq(full_p, full_q))
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
-        # Randomly assign apple/lemon as the first/second object to pick for each episode
-        if not hasattr(self, "pick_orders"):
-            self.pick_orders = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-        
-        # For the environments being reset, generate a new random order
-        self.pick_orders[env_idx] = torch.randint(0, 2, (len(env_idx),), device=self.device)
-
-        model_id_1 = "013_apple"
-        model_id_2 = "014_lemon"
-
-        obj_idx_1 = self.model_ids.index(model_id_1)
-        obj_idx_2 = self.model_ids.index(model_id_2)
-
-        half_height_1 = float(self.model_poses[obj_idx_1].p[2])
-        half_height_2 = float(self.model_poses[obj_idx_2].p[2])
-
-        if not hasattr(self, "env_target_obj_idx_1"):
+        # Randomly assign the order of target objects to pick for each episode
+        if not hasattr(self, "env_pick_order"):
+            self.env_pick_order = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
             self.env_target_obj_idx_1 = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
             self.env_target_obj_idx_2 = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
             self.env_target_obj_half_height_1 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
             self.env_target_obj_half_height_2 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
 
-        pick_objs_1 = []
-        pick_objs_2 = []
-        for i in range(self.num_envs):
-            # pick_orders[i] == 0: apple -> lemon
-            # pick_orders[i] == 1: lemon -> apple
-            is_apple_first = self.pick_orders[i] == 0
-            if is_apple_first:
-                self.env_target_obj_idx_1[i] = obj_idx_1
-                self.env_target_obj_half_height_1[i] = half_height_1
-                pick_objs_1.append(self.all_ycb_objects[i][obj_idx_1])
-                
-                self.env_target_obj_idx_2[i] = obj_idx_2
-                self.env_target_obj_half_height_2[i] = half_height_2
-                pick_objs_2.append(self.all_ycb_objects[i][obj_idx_2])
-            else: # lemon first
-                self.env_target_obj_idx_1[i] = obj_idx_2
-                self.env_target_obj_half_height_1[i] = half_height_2
-                pick_objs_1.append(self.all_ycb_objects[i][obj_idx_2])
-                
-                self.env_target_obj_idx_2[i] = obj_idx_1
-                self.env_target_obj_half_height_2[i] = half_height_1
-                pick_objs_2.append(self.all_ycb_objects[i][obj_idx_1])
-        
-        self.pick_obj_1 = Actor.merge(pick_objs_1, name="pick_obj_1")
-        self.pick_obj_2 = Actor.merge(pick_objs_2, name="pick_obj_2")
-        
-        # if not hasattr(self, "robot_cumulative_force"):
-        #     self.robot_cumulative_force = torch.zeros(self.num_envs, device=self.device)
+        # For the environments being reset, generate a new random order (0 or 1)
+        self.env_pick_order[env_idx] = torch.randint(0, len(self.target_model_ids), (len(env_idx),), device=self.device)
+
+        # Update all tracking tensors based on the new order FOR ALL ENVS
+        # pick_order == 0 means the order is target_obj[0] -> target_obj[1]
+        # pick_order == 1 means the order is target_obj[1] -> target_obj[0]
+        pick_order_0_mask = (self.env_pick_order == 0)
+        self.env_target_obj_idx_1 = torch.where(pick_order_0_mask, self.target_obj_indices[0], self.target_obj_indices[1])
+        self.env_target_obj_idx_2 = torch.where(pick_order_0_mask, self.target_obj_indices[1], self.target_obj_indices[0])
+        self.env_target_obj_half_height_1 = torch.where(pick_order_0_mask, self.target_half_heights[0], self.target_half_heights[1])
+        self.env_target_obj_half_height_2 = torch.where(pick_order_0_mask, self.target_half_heights[1], self.target_half_heights[0])
+
         self.table_scene.initialize(env_idx)
         self._initialize_ycb_objects(env_idx, options)
     
@@ -386,8 +361,11 @@ class PickYCBSequentialEnv(BaseEnv):
 
         z_margin = 0.01
 
-        pos_obj_1 = self.pick_obj_1.pose.p
-        pos_obj_2 = self.pick_obj_2.pose.p
+        pick_order_0_mask = (self.env_pick_order == 0).view(-1, 1)
+        
+        pos_obj_1 = torch.where(pick_order_0_mask, self.target_actors[0].pose.p, self.target_actors[1].pose.p)
+        pos_obj_2 = torch.where(pick_order_0_mask, self.target_actors[1].pose.p, self.target_actors[0].pose.p)
+
         pos_basket_bottom = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         
         # XY-plane check
@@ -414,10 +392,18 @@ class PickYCBSequentialEnv(BaseEnv):
         is_entering_basket_obj_2 = torch.logical_and(xy_flag_2, entering_basket_z_flag_2)
         is_placed_in_basket_obj_1 = torch.logical_and(xy_flag_1, placed_in_basket_z_flag_1)
         is_placed_in_basket_obj_2 = torch.logical_and(xy_flag_2, placed_in_basket_z_flag_2)
-        is_grasped_obj_1 = self.agent.is_grasping(self.pick_obj_1)
-        is_grasped_obj_2 = self.agent.is_grasping(self.pick_obj_2)
-        is_static_obj_1 = self.pick_obj_1.is_static(lin_thresh=1e-2, ang_thresh=0.5)
-        is_static_obj_2 = self.pick_obj_2.is_static(lin_thresh=1e-2, ang_thresh=0.5)
+
+        pick_order_0_mask_b = (self.env_pick_order == 0)
+        is_grasped_target_0 = self.agent.is_grasping(self.target_actors[0])
+        is_grasped_target_1 = self.agent.is_grasping(self.target_actors[1])
+        is_grasped_obj_1 = torch.where(pick_order_0_mask_b, is_grasped_target_0, is_grasped_target_1)
+        is_grasped_obj_2 = torch.where(pick_order_0_mask_b, is_grasped_target_1, is_grasped_target_0)
+
+        is_static_target_0 = self.target_actors[0].is_static(lin_thresh=1e-2, ang_thresh=0.5)
+        is_static_target_1 = self.target_actors[1].is_static(lin_thresh=1e-2, ang_thresh=0.5)
+        is_static_obj_1 = torch.where(pick_order_0_mask_b, is_static_target_0, is_static_target_1)
+        is_static_obj_2 = torch.where(pick_order_0_mask_b, is_static_target_1, is_static_target_0)
+
         is_robot_static = self.agent.is_static(0.2)
 
         success_1 = is_placed_in_basket_obj_1 & is_static_obj_1 & (~is_grasped_obj_1)
@@ -477,7 +463,9 @@ class PickYCBSequentialEnv(BaseEnv):
         # =========================
         # Object 1: Reach -> Grasp -> Lift -> Approach -> Enter -> Place
         # =========================
-        obj_pos_1 = self.pick_obj_1.pose.p
+        pick_order_0_mask = (self.env_pick_order == 0).view(-1, 1)
+        
+        obj_pos_1 = torch.where(pick_order_0_mask, self.target_actors[0].pose.p, self.target_actors[1].pose.p)
         obj_to_tcp_dist_1 = torch.linalg.norm(tcp_pose - obj_pos_1, dim=1)
 
         # 1. Reach reward (dense)
@@ -508,8 +496,13 @@ class PickYCBSequentialEnv(BaseEnv):
         reward = update_max(reward, mask_e1, cand)
 
         # 6. Place inside basket (ungrasp + static)
-        v1 = torch.linalg.norm(self.pick_obj_1.linear_velocity, dim=1)
-        av1 = torch.linalg.norm(self.pick_obj_1.angular_velocity, dim=1)
+        pick_order_0_mask_b = (self.env_pick_order == 0)
+        v_target_0 = torch.linalg.norm(self.target_actors[0].linear_velocity, dim=1)
+        av_target_0 = torch.linalg.norm(self.target_actors[0].angular_velocity, dim=1)
+        v_target_1 = torch.linalg.norm(self.target_actors[1].linear_velocity, dim=1)
+        av_target_1 = torch.linalg.norm(self.target_actors[1].angular_velocity, dim=1)
+        v1 = torch.where(pick_order_0_mask_b, v_target_0, v_target_1)
+        av1 = torch.where(pick_order_0_mask_b, av_target_0, av_target_1)
         static_reward_1 = 1.0 - torch.tanh(v1 * 5.0 + av1)
         cand = 10.0 + static_reward_1
         placed_mask_1 = info["is_placed_in_basket_obj_1"] & ~is_grasped_1
@@ -553,7 +546,7 @@ class PickYCBSequentialEnv(BaseEnv):
         # Object 2: Reach -> Grasp -> Lift -> Approach -> Enter -> Place (gated by obj1 progress)
         # =========================
         # 1. Reach object 2 (dense) - now gated by return to start
-        obj_pos_2 = self.pick_obj_2.pose.p
+        obj_pos_2 = torch.where(pick_order_0_mask, self.target_actors[1].pose.p, self.target_actors[0].pose.p)
         obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
         reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2))
         cand = 13.0 + reach_obj_2_reward
@@ -586,8 +579,8 @@ class PickYCBSequentialEnv(BaseEnv):
         reward = update_max(reward, mask_e2, cand)
 
         # 6. Place inside basket for O2 (ungrasp + static)
-        v2 = torch.linalg.norm(self.pick_obj_2.linear_velocity, dim=1)
-        av2 = torch.linalg.norm(self.pick_obj_2.angular_velocity, dim=1)
+        v2 = torch.where(pick_order_0_mask_b, v_target_1, v_target_0)
+        av2 = torch.where(pick_order_0_mask_b, av_target_1, av_target_0)
         static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
         cand = 23.0 + static_reward_2
         placed_mask_2 = mask_prog1 & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
