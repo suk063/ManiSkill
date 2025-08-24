@@ -36,7 +36,7 @@ imgui.ini
 /demos
 /videos
 /examples/benchmarking/videos
-/save_checkpoint/
+/save_checkpoint
 
 # benchmarking
 /benchmark_results
