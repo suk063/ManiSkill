@@ -95,7 +95,7 @@ class Args:
     """the list of model ids to use for the environment"""
     
     # Map-related arguments
-    use_map: bool = True
+    use_map: bool = False
     """if toggled, use the pre-trained environment map features as part of the observation"""
     map_dir: str = "mapping/multi_env_maps_custom"
     """Directory where the trained environment maps are stored."""

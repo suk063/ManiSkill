@@ -13,4 +13,5 @@ python map_rl_from_example/ppo_map.py \
     --capture-video \
     --track \
     --wandb_project_name "PPO-RL-Map" \
+    --use_map
     # --checkpoint "save_checkpoint/image_only.pt"
