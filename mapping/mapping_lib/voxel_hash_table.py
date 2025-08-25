@@ -166,7 +166,7 @@ class VoxelHashTable(nn.Module):
     """
     def __init__(
         self,
-        resolution: float = 0.06,
+        resolution: float = 0.12,
         num_levels: int = 2,
         level_scale: float = 2.0,
         feature_dim: int = 64,
