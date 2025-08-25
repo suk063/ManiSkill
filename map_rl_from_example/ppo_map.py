@@ -1,8 +1,10 @@
+# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from collections import defaultdict
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -17,31 +19,24 @@ import tyro
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn.functional as F
-import open_clip
 
 # ManiSkill specific imports
-import mani_skill
 import mani_skill.envs
 from mani_skill.utils import gym_utils
 from mani_skill.utils.wrappers.flatten import FlattenActionSpaceWrapper, FlattenRGBDObservationWrapper
 from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
-from model.agent import Agent
-from utils.utils import DictArray, GridSampler, Logger, build_checkpoint
-from utils.mapping import update_map_online
 
 # Mapping-related imports
 from mapping.mapping_lib.voxel_hash_table import VoxelHashTable
 from mapping.mapping_lib.implicit_decoder import ImplicitDecoder
-from mapping.mapping_lib.visualization import visualize_decoded_features_pca
-from mapping.mapping_lib.utils import get_visual_features, get_3d_coordinates
 
 
 @dataclass
 class Args:
     exp_name: Optional[str] = None
     """the name of this experiment"""
-    seed: int = 0
+    seed: int = 1
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
@@ -55,8 +50,6 @@ class Args:
     """the entity (team) of wandb's project"""
     wandb_group: str = "PPO"
     """the group of the run for wandb"""
-    wandb_tags: List[str] = field(default_factory=list)
-    """additional tags for the wandb run"""
     capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     save_model: bool = True
@@ -69,19 +62,17 @@ class Args:
     """the environment rendering mode"""
 
     # Algorithm specific arguments
-    env_id: str = "PickCubeDiscreteInit-v1"
+    env_id: str = "PickCube-v1"
     """the id of the environment"""
-    robot_uids: str = "panda"
-    """the uid of the robot to use in the environment"""
     include_state: bool = True
     """whether to include state information in observations"""
     total_timesteps: int = 10000000
     """total timesteps of the experiments"""
     learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 100
+    num_envs: int = 512
     """the number of parallel environments"""
-    num_eval_envs: int = 20
+    num_eval_envs: int = 8
     """the number of parallel evaluation environments"""
     partial_reset: bool = True
     """whether to let parallel environments reset upon termination instead of truncation"""
@@ -97,8 +88,20 @@ class Args:
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
-    camera_uids: List[str] = field(default_factory=lambda: ["base_camera"])
-    """the camera to use for the environment"""
+    total_envs: int = 100
+    """Total number of discrete environments available for sampling with global_idx"""
+    # task specification
+    model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon"])
+    """the list of model ids to use for the environment"""
+    
+    # Map-related arguments
+    use_map: bool = False
+    """if toggled, use the pre-trained environment map features as part of the observation"""
+    map_dir: str = "mapping/multi_env_maps_custom"
+    """Directory where the trained environment maps are stored."""
+    decoder_path: str = "mapping/multi_env_maps_custom/shared_decoder.pt"
+    """Path to the trained shared decoder model."""
+
     anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.8
@@ -123,57 +126,13 @@ class Args:
     """the maximum norm for the gradient clipping"""
     target_kl: float = 0.2
     """the target KL divergence threshold"""
-
     reward_scale: float = 1.0
     """Scale the reward by this factor"""
     eval_freq: int = 25
     """evaluation frequency in terms of iterations"""
-    checkpoint_freq: int = 100
-    """checkpoint saving frequency in terms of iterations"""
     save_train_video_freq: Optional[int] = None
     """frequency to save training videos in terms of iterations"""
     finite_horizon_gae: bool = False
-
-    # task specification
-    # (NOTE): the order should match the order of the model_ids in the env
-    model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "005_tomato_soup_can", "009_gelatin_box", "011_banana"])
-
-    # Environment discretisation
-    total_envs: int = 100
-    """Number of cells per axis used for discrete initialisation."""
-
-    # Map-related arguments
-    use_map: bool = False
-    """if toggled, use the pre-trained environment map features as part of the observation"""
-    use_local_fusion: bool = False
-    """if toggled, use the local fusion of the image and map features"""
-    vision_encoder: str = "dino" # "plain_cnn" or "dino"
-    """the vision encoder to use for the agent"""
-    freeze_dino_backbone: bool = False
-    """if toggled, freeze the DINO backbone"""
-    dino_lr: float = 5e-6
-    """learning rate for the DINO backbone if fine-tuning"""
-    map_dir: str = "mapping/multi_env_maps_custom"
-    """Directory where the trained environment maps are stored."""
-    decoder_path: str = "mapping/multi_env_maps_custom/shared_decoder.pt"
-    """Path to the trained shared decoder model."""
-
-    # Online mapping arguments
-    use_online_mapping: bool = False
-    """if toggled, update the map online based on robot observations"""
-    online_map_update_steps: int = 20
-    """the number of optimization steps for online map update per observation"""
-    online_decoder_update_steps: int = 5
-    """the number of optimization steps for online decoder update per observation"""
-    online_map_lr: float = 1e-3
-    """the learning rate for the online map optimizer"""
-    robot_segmentation_id: List[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])
-    mapping_step_limit: int = 20
-    """the step limit for mapping"""
-    map_update_freq: int = 5
-    """the frequency of online map updates"""
-    map_start_iteration: int = 10000000
-    """iteration to start using map features"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -182,12 +141,302 @@ class Args:
     """the mini-batch size (computed in runtime)"""
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
+    num_tasks: int = 0
+    """the number of tasks (computed in runtime)"""
+
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    torch.nn.init.orthogonal_(layer.weight, std)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+class PointNet(nn.Module):
+    def __init__(self, input_dim, output_dim=256, L=10):
+        super().__init__()
+        self.L = L
+        pe_dim = 3 * 2 * self.L
+        self.net = nn.Sequential(
+            layer_init(nn.Linear(input_dim + pe_dim, 256)),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            layer_init(nn.Linear(256, 256)),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            layer_init(nn.Linear(256, output_dim)),
+        )
+
+    def _sinusoidal_pe(self, coords: torch.Tensor) -> torch.Tensor:
+        # coords: (..., 3)
+        # returns: (..., 3 * 2 * L)
+        freqs = 2**torch.arange(self.L, device=coords.device).float()
+        
+        # unsqueeze to broadcast with coords
+        freqs = freqs.view(*([1] * (coords.dim() - 1)), -1)
+        
+        coords_scaled = coords.unsqueeze(-1) * freqs
+        
+        sines = torch.sin(coords_scaled)
+        cosines = torch.cos(coords_scaled)
+        
+        pe = torch.cat([sines, cosines], dim=-1)
+        
+        # reshape to (..., 3 * 2 * L)
+        pe = pe.view(*coords.shape[:-1], -1)
+        return pe
+
+    def forward(self, x, coords, pad_mask=None):   # pad_mask: (B, L) True=pad
+        pe = self._sinusoidal_pe(coords)
+        if pad_mask is not None:
+            pe = pe.masked_fill(pad_mask[..., None], 0)
+        x_with_pe = torch.cat([x, pe], dim=-1)
+        h = self.net(x_with_pe)                     # (B, L, C)
+        if pad_mask is not None:
+            h = h.masked_fill(pad_mask[..., None], float('-inf'))
+        out = h.max(dim=1).values           # (B, C)
+        out[out.eq(float('-inf'))] = 0
+        return out
+
+class DictArray(object):
+    def __init__(self, buffer_shape, element_space, data_dict=None, device=None):
+        self.buffer_shape = buffer_shape
+        if data_dict:
+            self.data = data_dict
+        else:
+            assert isinstance(element_space, gym.spaces.dict.Dict)
+            self.data = {}
+            for k, v in element_space.items():
+                if isinstance(v, gym.spaces.dict.Dict):
+                    self.data[k] = DictArray(buffer_shape, v, device=device)
+                else:
+                    dtype = (torch.float32 if v.dtype in (np.float32, np.float64) else
+                            torch.uint8 if v.dtype == np.uint8 else
+                            torch.int16 if v.dtype == np.int16 else
+                            torch.int32 if v.dtype == np.int32 else
+                            torch.bool if v.dtype in (np.bool_, bool) else
+                            v.dtype)
+                    self.data[k] = torch.zeros(buffer_shape + v.shape, dtype=dtype, device=device)
+
+    def keys(self):
+        return self.data.keys()
+
+    def __getitem__(self, index):
+        if isinstance(index, str):
+            return self.data[index]
+        return {
+            k: v[index] for k, v in self.data.items()
+        }
+
+    def __setitem__(self, index, value):
+        if isinstance(index, str):
+            self.data[index] = value
+        for k, v in value.items():
+            self.data[k][index] = v
+
+    @property
+    def shape(self):
+        return self.buffer_shape
+
+    def reshape(self, shape):
+        t = len(self.buffer_shape)
+        new_dict = {}
+        for k,v in self.data.items():
+            if isinstance(v, DictArray):
+                new_dict[k] = v.reshape(shape)
+            else:
+                new_dict[k] = v.reshape(shape + v.shape[t:])
+        new_buffer_shape = next(iter(new_dict.values())).shape[:len(shape)]
+        return DictArray(new_buffer_shape, None, data_dict=new_dict)
+
+class GridSampler:
+    def __init__(self, all_grids, batch_size: int, seed: int = 0):
+        self.all_grids = all_grids
+        self.total_grids = len(all_grids)
+        self.batch_size = batch_size
+        self.indices = np.array([], dtype=int)
+        self.rng = np.random.RandomState(seed)
+
+    def _ensure_indices(self):
+        if len(self.indices) < self.batch_size:
+            new_indices = np.arange(self.total_grids)
+            self.rng.shuffle(new_indices)
+            self.indices = np.concatenate([self.indices, new_indices])
+
+    def sample(self):
+        self._ensure_indices()
+        batch_indices = self.indices[: self.batch_size]
+        self.indices = self.indices[self.batch_size :]
+        if self.all_grids is None or len(self.all_grids) == 0:
+            return batch_indices, None
+        sampled_grids = [self.all_grids[i] for i in batch_indices]
+        return batch_indices, sampled_grids
+
+
+class NatureCNN(nn.Module):
+    def __init__(self, sample_obs, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False):
+        super().__init__()
+
+        extractors = {}
+
+        self.out_features = 0
+        feature_size = 256
+        in_channels=sample_obs["rgb"].shape[-1]
+        image_size=(sample_obs["rgb"].shape[1], sample_obs["rgb"].shape[2])
+
+
+        # here we use a NatureCNN architecture to process images, but any architecture is permissble here
+        cnn = nn.Sequential(
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=32,
+                kernel_size=8,
+                stride=4,
+                padding=0,
+            ),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=32, out_channels=64, kernel_size=4, stride=2, padding=0
+            ),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=0
+            ),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+
+        # to easily figure out the dimensions after flattening, we pass a test tensor
+        with torch.no_grad():
+            n_flatten = cnn(sample_obs["rgb"].float().permute(0,3,1,2).cpu()).shape[1]
+            fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
+        extractors["rgb"] = nn.Sequential(cnn, fc)
+        self.out_features += feature_size
+
+        if "state" in sample_obs:
+            # for state data we simply pass it through a single linear layer
+            state_size = sample_obs["state"].shape[-1]
+            extractors["state"] = nn.Linear(state_size, 256)
+            self.out_features += 256
+
+        self.task_embedding = None
+        if num_tasks > 0:
+            self.task_embedding = nn.Embedding(num_tasks, feature_size)
+            self.out_features += feature_size
+
+        self.extractors = nn.ModuleDict(extractors)
+
+        # Map-related components
+        object.__setattr__(self, "_decoder", decoder)
+        self.use_map = use_map and (decoder is not None)
+        if self.use_map:
+            map_raw_dim = 768  # output dim of *decoder*
+            self.map_encoder = PointNet(map_raw_dim, feature_size)
+            self.out_features += feature_size
+
+
+    def forward(self, observations, env_target_obj_idx=None, map_features=None) -> torch.Tensor:
+        encoded_tensor_list = []
+        # self.extractors contain nn.Modules that do all the processing.
+        for key, extractor in self.extractors.items():
+            obs = observations[key]
+            if key == "rgb":
+                obs = obs.float().permute(0,3,1,2)
+                obs = obs / 255.0
+            encoded_tensor_list.append(extractor(obs))
+        
+        if self.task_embedding is not None:
+            assert env_target_obj_idx is not None, "env_target_obj_idx must be provided for task embedding"
+            task_emb = self.task_embedding(env_target_obj_idx)
+            encoded_tensor_list.append(task_emb)
+
+        if self.use_map:
+            assert map_features is not None, "map_features must be provided when use_map=True"
+            
+            coords_batch, raw_batch = [], []
+            for g in map_features:
+                coords = g.levels[1].coords
+                coords_batch.append(coords)
+                raw_batch.append(g.query_voxel_feature(coords))
+
+            # The decoder is pre-trained and used in inference mode.
+            with torch.no_grad():
+                dec_cat = self._decoder(torch.cat(raw_batch, dim=0))
+            
+            dec_split = dec_cat.split([c.size(0) for c in coords_batch], dim=0)
+            
+            lengths = [c.size(0) for c in coords_batch]
+            pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)
+            coords_padded = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)
+            Lmax = pad_3d.size(1)
+
+            pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
+                    torch.tensor(lengths, device=pad_3d.device)[:, None]
+            
+            map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
+            encoded_tensor_list.append(map_vec)
+
+        return torch.cat(encoded_tensor_list, dim=1)
+
+class Agent(nn.Module):
+    def __init__(self, envs, sample_obs, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False):
+        super().__init__()
+        self.feature_net = NatureCNN(sample_obs=sample_obs, num_tasks=num_tasks, decoder=decoder, use_map=use_map)
+        # latent_size = np.array(envs.unwrapped.single_observation_space.shape).prod()
+        latent_size = self.feature_net.out_features
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(latent_size, 512)),
+            nn.ReLU(inplace=True),
+            layer_init(nn.Linear(512, 1)),
+        )
+        self.actor_mean = nn.Sequential(
+            layer_init(nn.Linear(latent_size, 512)),
+            nn.ReLU(inplace=True),
+            layer_init(nn.Linear(512, np.prod(envs.unwrapped.single_action_space.shape)), std=0.01*np.sqrt(2)),
+        )
+        self.actor_logstd = nn.Parameter(torch.ones(1, np.prod(envs.unwrapped.single_action_space.shape)) * -0.5)
+
+    def get_features(self, x, env_target_obj_idx=None, map_features=None):
+        return self.feature_net(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
+
+    def get_value(self, x, env_target_obj_idx=None, map_features=None):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
+        return self.critic(x)
+
+    def get_action(self, x, env_target_obj_idx=None, map_features=None, deterministic=False):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
+        action_mean = self.actor_mean(x)
+        if deterministic:
+            return action_mean
+        action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
+        probs = Normal(action_mean, action_std)
+        return probs.sample()
+
+    def get_action_and_value(self, x, env_target_obj_idx=None, map_features=None, action=None):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
+        action_mean = self.actor_mean(x)
+        action_logstd = self.actor_logstd.expand_as(action_mean)
+        action_std = torch.exp(action_logstd)
+        probs = Normal(action_mean, action_std)
+        if action is None:
+            action = probs.sample()
+        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+
+class Logger:
+    def __init__(self, log_wandb=False, tensorboard: SummaryWriter = None) -> None:
+        self.writer = tensorboard
+        self.log_wandb = log_wandb
+    def add_scalar(self, tag, scalar_value, step):
+        if self.log_wandb:
+            wandb.log({tag: scalar_value}, step=step)
+        self.writer.add_scalar(tag, scalar_value, step)
+    def close(self):
+        self.writer.close()
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
+    args.num_tasks = len(args.model_ids)
     if args.exp_name is None:
         args.exp_name = os.path.basename(__file__)[: -len(".py")]
         run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -201,40 +450,11 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-    args.device = device
-
-    # --- Load CLIP model for text and online mapping ---
-    clip_model = None
-    if args.use_online_mapping:
-        print("--- Loading CLIP model for online mapping ---")
-        clip_model_name = "EVA02-L-14"
-        clip_weights_id = "merged2b_s4b_b131k"
-        clip_model, _, _ = open_clip.create_model_and_transforms(
-            clip_model_name, pretrained=clip_weights_id
-        )
-        clip_model = clip_model.to(device)
-        clip_model.eval()
-        for param in clip_model.parameters():
-            param.requires_grad = False
-    else:
-        print("--- CLIP model not loaded as online mapping is disabled ---")
-
-    # Add camera_uids to args to be accessed by mapping functions
-    args.camera_uids = args.camera_uids
 
     # --- Load Maps and Decoder ---
-    # Always define total number of discrete environments
-    total_envs = args.total_envs
-    # Placeholders for map-related variables to avoid NameError when use_map is False
-    all_grids = None
-    grid_sampler = None
-    active_indices = None
-    eval_indices = None
-    grids, decoder = None, None
-    initial_decoder_state_dict = None
+    all_grids, decoder = None, None
     if args.use_map:
         print("--- Loading maps and decoder for PPO training ---")
-        # 1. Load Decoder
         try:
             decoder = ImplicitDecoder(
                 voxel_feature_dim=64 * 2, # GRID_FEAT_DIM * GRID_LVLS from map_multi_table.py
@@ -242,30 +462,21 @@ if __name__ == "__main__":
                 output_dim=768,
             ).to(device)
             decoder.load_state_dict(torch.load(args.decoder_path, map_location=device))
-            if args.use_online_mapping:
-                decoder.train()
-                for param in decoder.parameters():
-                    param.requires_grad = True
-                initial_decoder_state_dict = {k: v.clone() for k, v in decoder.state_dict().items()}
-                print(f"Loaded shared decoder from {args.decoder_path} for online training.")
-            else:
-                decoder.eval()
-                for param in decoder.parameters():
-                    param.requires_grad = False
-                print(f"Loaded shared decoder from {args.decoder_path}")
+            decoder.eval()
+            for param in decoder.parameters():
+                param.requires_grad = False
+            print(f"Loaded shared decoder from {args.decoder_path}")
         except FileNotFoundError:
             print(f"[ERROR] Decoder file not found at {args.decoder_path}. Exiting.")
             exit()
 
-        # 2. Load ALL grids (grid_dim²) and build sampling helper
-        total_envs = args.total_envs
         all_grids = []
         if not os.path.exists(args.map_dir):
             print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
             exit()
 
-        print(f"Loading {total_envs} maps from {args.map_dir} ...")
-        for i in range(total_envs):
+        print(f"Loading {args.total_envs} maps from {args.map_dir} ...")
+        for i in range(args.total_envs):
             grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.sparse.pt")
             if not os.path.exists(grid_path):
                 print(f"[ERROR] Map file not found: {grid_path}. Exiting.")
@@ -273,59 +484,20 @@ if __name__ == "__main__":
             all_grids.append(VoxelHashTable.load_sparse(grid_path, device=device))
         print(f"--- Loaded {len(all_grids)} maps. ---")
 
-        # Freeze any grid parameters to avoid accidental training
         for grid in all_grids:
             for p in grid.parameters():
                 p.requires_grad = False
-        # (sampler is created below in a unified way)
-
-    # Helper for a fixed random subset for evaluation (always available)
-    def _random_sample_eval(n_envs: int):
-        rng = np.random.RandomState(seed=args.seed)
-        idx = rng.choice(total_envs, n_envs, replace=False)
-        return idx
-
-    # Create GridSampler once. When not using map, create dummy list of length total_envs
-    batch_train_envs = args.num_envs if not args.evaluate else 1
-    if args.use_map:
-        grid_sampler = GridSampler(all_grids, batch_train_envs, seed=args.seed)
-    else:
-        # Create a placeholder list to satisfy GridSampler API; we only need indices
-        dummy_list = list(range(total_envs))
-        grid_sampler = GridSampler(dummy_list, batch_train_envs, seed=args.seed)
-
-    # Initial training/eval subsets
-    active_indices, grids = grid_sampler.sample()
-    if not args.use_map:
-        grids = None
-    eval_indices = _random_sample_eval(args.num_eval_envs)
-    
-        
-    # debug: Visualize the first map
-    # if grids and decoder:
-    #     print("--- Visualizing map features for the first environment ---")
-    #     visualize_decoded_features_pca(grids[0], decoder, device=device)
-    #     print("--- Visualization done. Continuing with training/evaluation. ---")
 
     # env setup
-    env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda", camera_uids=args.camera_uids)
-    # env_kwargs = dict(robot_uids=args.robot_uids, obs_mode="rgb+depth+segmentation", render_mode=args.render_mode, sim_backend="physx_cuda", total_envs=args.total_envs)
+    env_kwargs = dict(obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda")
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
     envs = gym.make(args.env_id, num_envs=args.num_envs if not args.evaluate else 1, reconfiguration_freq=args.reconfiguration_freq, **env_kwargs)
 
     # rgbd obs mode returns a dict of data, we flatten it so there is just a rgbd key and state key
-    envs = FlattenRGBDObservationWrapper(envs, rgb=True, depth=True, state=args.include_state, include_camera_params=True, include_segmentation=True)
-    eval_envs = FlattenRGBDObservationWrapper(eval_envs, rgb=True, depth=True, state=args.include_state, include_camera_params=True, include_segmentation=True)
-
-    # visalize segmentation id map
-    # Save segmentation id map to file
-    segmentation_map = dict(envs.unwrapped.segmentation_id_map.items())
-    with open(f"segmentation_id_map.txt", "w") as f:
-        for key, value in segmentation_map.items():
-            f.write(f"{key}: {value}\n")
-    print(f"Segmentation ID map saved to runs/{run_name}/segmentation_id_map.txt")
+    envs = FlattenRGBDObservationWrapper(envs, rgb=True, depth=False, state=args.include_state)
+    eval_envs = FlattenRGBDObservationWrapper(eval_envs, rgb=True, depth=False, state=args.include_state)
 
     if isinstance(envs.action_space, gym.spaces.Dict):
         envs = FlattenActionSpaceWrapper(envs)
@@ -333,8 +505,7 @@ if __name__ == "__main__":
     if args.capture_video:
         eval_output_dir = f"runs/{run_name}/videos"
         if args.evaluate:
-            if args.checkpoint:
-                eval_output_dir = f"{os.path.dirname(args.checkpoint)}/test_videos"
+            eval_output_dir = f"{os.path.dirname(args.checkpoint)}/test_videos"
         print(f"Saving eval videos to {eval_output_dir}")
         if args.save_train_video_freq is not None:
             save_video_trigger = lambda x : (x // args.num_steps) % args.save_train_video_freq == 0
@@ -361,7 +532,7 @@ if __name__ == "__main__":
                 name=run_name,
                 save_code=True,
                 group=args.wandb_group,
-                tags=list(args.wandb_tags)
+                tags=["ppo", "walltime_efficient"]
             )
         writer = SummaryWriter(f"runs/{run_name}")
         writer.add_text(
@@ -371,6 +542,25 @@ if __name__ == "__main__":
         logger = Logger(log_wandb=args.track, tensorboard=writer)
     else:
         print("Running evaluation")
+
+    # Create samplers for train/eval subsets of global envs and do initial resets with global_idx
+    batch_train_envs = args.num_envs if not args.evaluate else 1
+    
+    if args.use_map:
+        grid_sampler = GridSampler(all_grids, batch_train_envs, seed=args.seed)
+    else:
+        # Create a placeholder list to satisfy GridSampler API; we only need indices
+        dummy_list = list(range(args.total_envs))
+        grid_sampler = GridSampler(dummy_list, batch_train_envs, seed=args.seed)
+
+    rng_eval = np.random.RandomState(args.seed + 123)
+    eval_indices = rng_eval.choice(args.total_envs, args.num_eval_envs, replace=False)
+    active_indices, grids = grid_sampler.sample()
+    
+    eval_grids = None
+    if args.use_map:
+        eval_grids = [all_grids[i] for i in eval_indices]
+
 
     # ALGO Logic: Storage setup
     obs = DictArray((args.num_steps, args.num_envs), envs.single_observation_space, device=device)
@@ -384,99 +574,46 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, infos = envs.reset(seed=args.seed, options={'global_idx': active_indices.tolist()})
+    next_obs, infos = envs.reset(seed=args.seed, options={"global_idx": active_indices.tolist()})
     next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
     next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']
     next_success_obj_1 = infos['success_obj_1']
-    if args.use_map:
-        eval_grids = [all_grids[i] for i in eval_indices]
-    else:
-        eval_grids = None
-    eval_obs, eval_infos = eval_envs.reset(seed=args.seed, options={'global_idx': eval_indices.tolist()})
+    eval_obs, eval_infos = eval_envs.reset(seed=args.seed, options={"global_idx": eval_indices.tolist()})
     next_done = torch.zeros(args.num_envs, device=device)
     print(f"####")
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
     print(f"args.minibatch_size={args.minibatch_size} args.batch_size={args.batch_size} args.update_epochs={args.update_epochs}")
     print(f"####")
-    agent = Agent(
-        envs, 
-        sample_obs=next_obs, 
-        decoder=decoder if args.use_map else None, 
-        use_local_fusion=args.use_local_fusion, 
-        vision_encoder=args.vision_encoder,
-        num_tasks=len(args.model_ids),
-        camera_uids=args.camera_uids,
-        freeze_dino_backbone=args.freeze_dino_backbone,
-    ).to(device)
-    # Use differential learning rates for DINO backbone vs. the rest
-    if args.vision_encoder == "dino":
-        try:
-            dino_backbone_params = list(agent.feature_net.vision_encoder.backbone.parameters())
-            dino_backbone_param_ids = set(map(id, dino_backbone_params))
-            other_params = [p for p in agent.parameters() if id(p) not in dino_backbone_param_ids]
-            
-            param_groups = [{"params": other_params, "lr": args.learning_rate}]
-            
-            if not args.freeze_dino_backbone:
-                param_groups.append({"params": dino_backbone_params, "lr": args.dino_lr})
-                print(f"--- Fine-tuning DINO backbone with learning rate {args.dino_lr} ---")
-            else:
-                print("--- DINO backbone is frozen ---")
-
-            optimizer = optim.Adam(param_groups, eps=1e-5)
-        except AttributeError:
-            # Fallback in case the backbone structure changes
-            optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-    else:
-        optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    agent = Agent(envs, sample_obs=next_obs, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map).to(device)
+    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     if args.checkpoint:
-        checkpoint = torch.load(args.checkpoint)
-        agent.load_state_dict(checkpoint["model"], strict=False)
-        if "decoder" in checkpoint and args.use_map:
-            decoder.load_state_dict(checkpoint["decoder"])
-        if "optimizer" in checkpoint and not args.evaluate:
-            opt_state = checkpoint["optimizer"]
-            opt_state["param_groups"] = optimizer.param_groups
-            optimizer.load_state_dict(opt_state)
-            global_step = checkpoint["global_step"]
-            start_iteration = checkpoint["iteration"] + 1
-        else:
-            start_iteration = 1
-            global_step = 0
-    else:
-        start_iteration = 1
-        global_step = 0
+        print(f"Loading checkpoint from {args.checkpoint}")
+        checkpoint_state_dict = torch.load(args.checkpoint, map_location=device)
+        model_state_dict = agent.state_dict()
+        
+        # Filter out parameters with size mismatches
+        filtered_state_dict = {
+            k: v for k, v in checkpoint_state_dict.items() 
+            if k in model_state_dict and v.size() == model_state_dict[k].size()
+        }
+        
+        mismatched_keys = checkpoint_state_dict.keys() - filtered_state_dict.keys()
+        if mismatched_keys:
+            print(f"Skipping mismatched keys: {mismatched_keys}")
+
+        model_state_dict.update(filtered_state_dict)
+        agent.load_state_dict(model_state_dict)
 
     cumulative_times = defaultdict(float)
 
-    for iteration in range(start_iteration, args.num_iterations + 1):
-        # --------------------------------------------------------------
-        # Resample subset of environments for this epoch (train)
-        # --------------------------------------------------------------
-        # Resample next training subset using GridSampler
-        use_map_features = iteration >= args.map_start_iteration
+    for iteration in range(1, args.num_iterations + 1):
+        # Resample training subset each iteration and reset with global_idx
         active_indices, grids = grid_sampler.sample()
-        if not args.use_map:
-            grids = None
-        else:
-            # For online mapping, create a copy of the grids for this rollout
-            if args.use_online_mapping:
-                # if initial_decoder_state_dict:
-                #     decoder.load_state_dict(initial_decoder_state_dict)
-                online_grids = [grid.clone() for grid in grids]
-                for grid in online_grids:
-                    for p in grid.parameters():
-                        p.requires_grad = True
-                # Create a single optimizer for all map and decoder parameters
-                all_map_params = [p for grid in online_grids for p in grid.parameters()]
-                map_optimizer = optim.Adam(all_map_params + list(decoder.parameters()), lr=args.online_map_lr)
-            else:
-                online_grids = grids
-                map_optimizer = None
-
-        next_obs, infos = envs.reset(options={'global_idx': active_indices.tolist()})
-
+        next_obs, infos = envs.reset(options={"global_idx": active_indices.tolist()})
+        next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
+        next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']
+        next_success_obj_1 = infos['success_obj_1']
         next_done = torch.zeros(args.num_envs, device=device)
         print(f"Epoch: {iteration}, global_step={global_step}")
         final_values = torch.zeros((args.num_steps, args.num_envs), device=device)
@@ -484,71 +621,23 @@ if __name__ == "__main__":
         if iteration % args.eval_freq == 1:
             print("Evaluating")
             stime = time.perf_counter()
-            # Use FIXED evaluation subset (eval_indices, eval_grids) sampled once at start
-            eval_obs, eval_infos = eval_envs.reset(options={'global_idx': eval_indices.tolist()})
-
-            # For online mapping during evaluation
-            if args.use_online_mapping and args.use_map:
-                # if initial_decoder_state_dict:
-                #     decoder.load_state_dict(initial_decoder_state_dict)
-                online_eval_grids = [grid.clone() for grid in eval_grids]
-                for grid in online_eval_grids:
-                    for p in grid.parameters():
-                        p.requires_grad = True
-                all_eval_map_params = [p for grid in online_eval_grids for p in grid.parameters()]
-                eval_map_optimizer = optim.Adam(all_eval_map_params + list(decoder.parameters()), lr=args.online_map_lr)
-            else:
-                online_eval_grids = eval_grids
-                eval_map_optimizer = None
-
-            # (NOTE): debugging code to save target objects ---
-            target_obj_indices = eval_infos['env_target_obj_idx_1'].cpu().numpy()
-            target_obj_indices_2 = eval_infos['env_target_obj_idx_2'].cpu().numpy()
-            target_obj_names = [args.model_ids[i] for i in target_obj_indices]
-            target_obj_names_2 = [args.model_ids[i] for i in target_obj_indices_2]
-            output_path = os.path.join(f"runs/{run_name}", "eval_target_objects.txt")
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            with open(output_path, "w") as f:
-                for i, name in enumerate(target_obj_names):
-                    f.write(f"eval_env_{i}: {name}\n")
-                for i, name in enumerate(target_obj_names_2):
-                    f.write(f"eval_env_{i}: {name}\n")
-            print(f"Saved eval target objects to {output_path}")
-            # --- End of debugging code ---
-
+            eval_obs, eval_infos = eval_envs.reset(options={"global_idx": eval_indices.tolist()})
             eval_metrics = defaultdict(list)
             num_episodes = 0
-            for step in range(args.num_eval_steps):
+            for _ in range(args.num_eval_steps):
                 with torch.no_grad():
                     eval_target_obj_idx = torch.where(
                         eval_infos['success_obj_1'], 
                         eval_infos['env_target_obj_idx_2'], 
                         eval_infos['env_target_obj_idx_1']
                     )
-                    action = agent.get_action(
-                        eval_obs,
-                        map_features=online_eval_grids if args.use_map else None,
-                        env_target_obj_idx=eval_target_obj_idx,
-                        deterministic=True,
-                        use_map_features=use_map_features
-                    )
-                
-                eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
-
-                # Online map update for evaluation
-                if args.use_online_mapping:
-                    if step % args.map_update_freq == 0:
-                        is_obj_grasped = eval_infos['is_obj_grasped']
-                        update_mask = ~is_obj_grasped
-                        update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args, update_mask=update_mask)
-
-                # eval_infos['env_target_obj_idx']
-
-                if "final_info" in eval_infos:
-                    mask = eval_infos["_final_info"]
-                    num_episodes += mask.sum()
-                    for k, v in eval_infos["final_info"]["episode"].items():
-                        eval_metrics[k].append(v)
+                    action = agent.get_action(eval_obs, env_target_obj_idx=eval_target_obj_idx, map_features=eval_grids, deterministic=True)
+                    eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
+                    if "final_info" in eval_infos:
+                        mask = eval_infos["_final_info"]
+                        num_episodes += mask.sum()
+                        for k, v in eval_infos["final_info"]["episode"].items():
+                            eval_metrics[k].append(v)
             print(f"Evaluated {args.num_eval_steps * args.num_eval_envs} steps resulting in {num_episodes} episodes")
             for k, v in eval_metrics.items():
                 mean = torch.stack(v).float().mean()
@@ -562,13 +651,8 @@ if __name__ == "__main__":
             if args.evaluate:
                 break
         if args.save_model and iteration % args.eval_freq == 1:
-            model_path = f"runs/{run_name}/ckpt_latest.pt"
-            # torch.save(agent.state_dict(), model_path)
-            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step), model_path)
-            print(f"model saved to {model_path}")
-        if args.save_model and iteration % args.checkpoint_freq == 0:
             model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
-            torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, iteration, global_step), model_path)
+            torch.save(agent.state_dict(), model_path)
             print(f"model saved to {model_path}")
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -589,30 +673,16 @@ if __name__ == "__main__":
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(
-                    next_obs,
-                    map_features=online_grids if args.use_online_mapping else grids,
-                    env_target_obj_idx=next_env_target_obj_idx,
-                    use_map_features=use_map_features
-                )
+                action, logprob, _, value = agent.get_action_and_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action)
-
             next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
             next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']
             next_success_obj_1 = infos['success_obj_1']
-            
-            # Online map update
-            if args.use_online_mapping:
-                if step % args.map_update_freq == 0:
-                    is_obj_grasped = infos['is_obj_grasped']
-                    update_mask = ~is_obj_grasped
-                    update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args, update_mask=update_mask)
-
             next_done = torch.logical_or(terminations, truncations).to(torch.float32)
             rewards[step] = reward.view(-1) * args.reward_scale
 
@@ -620,10 +690,8 @@ if __name__ == "__main__":
                 final_info = infos["final_info"]
                 done_mask = infos["_final_info"]
                 for k, v in final_info["episode"].items():
-                    if logger is not None:
-                        logger.add_scalar(f"train/{k}", v.float().mean(), global_step)
+                    logger.add_scalar(f"train/{k}", v[done_mask].float().mean(), global_step)
 
-                # Slice final observations for environments that terminated
                 final_obs = infos["final_observation"]
                 def _slice(o):
                     if isinstance(o, dict):
@@ -637,17 +705,14 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     idx = torch.arange(args.num_envs, device=device)[done_mask]
                     if len(idx) > 0:
-                        final_grids = [grid for i, grid in enumerate(online_grids if args.use_online_mapping else grids) if done_mask[i]] if args.use_map else None
+                        final_grids = [grids[i] for i, done in enumerate(done_mask) if done] if args.use_map else None
                         final_env_target_obj_idx = torch.where(
                             final_info['success_obj_1'][done_mask],
                             final_info['env_target_obj_idx_2'][done_mask],
                             final_info['env_target_obj_idx_1'][done_mask]
                         )
                         final_values[step, idx] = agent.get_value(
-                            final_obs,
-                            map_features=final_grids,
-                            env_target_obj_idx=final_env_target_obj_idx,
-                            use_map_features=use_map_features
+                            final_obs, env_target_obj_idx=final_env_target_obj_idx, map_features=final_grids
                         ).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
@@ -658,12 +723,7 @@ if __name__ == "__main__":
                 next_env_target_obj_idx_2,
                 next_env_target_obj_idx_1
             )
-            next_value = agent.get_value(
-                next_obs,
-                map_features=online_grids if args.use_online_mapping else grids,
-                env_target_obj_idx=next_env_target_obj_idx,
-                use_map_features=use_map_features
-            ).reshape(1, -1)
+            next_value = agent.get_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -725,15 +785,11 @@ if __name__ == "__main__":
                 mb_inds = b_inds[start:end]
 
                 mb_grids = [grids[i % args.num_envs] for i in mb_inds] if args.use_map else None
-                if args.use_online_mapping and args.use_map:
-                    mb_grids = [online_grids[i % args.num_envs] for i in mb_inds]
-                
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(
                     b_obs[mb_inds],
-                    map_features=mb_grids,
                     env_target_obj_idx=b_env_target_obj_idxs[mb_inds],
-                    action=b_actions[mb_inds],
-                    use_map_features=use_map_features
+                    map_features=mb_grids,
+                    action=b_actions[mb_inds]
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
@@ -805,9 +861,8 @@ if __name__ == "__main__":
             logger.add_scalar(f"time/total_{k}", v, global_step)
         logger.add_scalar("time/total_rollout+update_time", cumulative_times["rollout_time"] + cumulative_times["update_time"], global_step)
     if args.save_model and not args.evaluate:
-        model_path = f"runs/{run_name}/ckpt_latest.pt"
-        # torch.save(agent.state_dict(), model_path)
-        torch.save(build_checkpoint(agent, decoder, args, envs, optimizer, args.num_iterations, global_step), model_path)
+        model_path = f"runs/{run_name}/final_ckpt.pt"
+        torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
 
     envs.close()

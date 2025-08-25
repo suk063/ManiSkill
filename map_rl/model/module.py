@@ -20,10 +20,12 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     return layer
 
 class PointNet(nn.Module):
-    def __init__(self, input_dim, output_dim=256):
+    def __init__(self, input_dim, output_dim=256, L=10):
         super().__init__()
+        self.L = L
+        pe_dim = 3 * 2 * self.L
         self.net = nn.Sequential(
-            layer_init(nn.Linear(input_dim, 256)),
+            layer_init(nn.Linear(input_dim + pe_dim, 256)),
             nn.LayerNorm(256),
             nn.GELU(),
             layer_init(nn.Linear(256, 256)),
@@ -32,8 +34,31 @@ class PointNet(nn.Module):
             layer_init(nn.Linear(256, output_dim)),
         )
 
-    def forward(self, x, pad_mask=None):   # pad_mask: (B, L) True=pad
-        h = self.net(x)                     # (B, L, C)
+    def _sinusoidal_pe(self, coords: torch.Tensor) -> torch.Tensor:
+        # coords: (..., 3)
+        # returns: (..., 3 * 2 * L)
+        freqs = 2**torch.arange(self.L, device=coords.device).float()
+        
+        # unsqueeze to broadcast with coords
+        freqs = freqs.view(*([1] * (coords.dim() - 1)), -1)
+        
+        coords_scaled = coords.unsqueeze(-1) * freqs
+        
+        sines = torch.sin(coords_scaled)
+        cosines = torch.cos(coords_scaled)
+        
+        pe = torch.cat([sines, cosines], dim=-1)
+        
+        # reshape to (..., 3 * 2 * L)
+        pe = pe.view(*coords.shape[:-1], -1)
+        return pe
+
+    def forward(self, x, coords, pad_mask=None):   # pad_mask: (B, L) True=pad
+        pe = self._sinusoidal_pe(coords)
+        if pad_mask is not None:
+            pe = pe.masked_fill(pad_mask[..., None], 0)
+        x_with_pe = torch.cat([x, pe], dim=-1)
+        h = self.net(x_with_pe)                     # (B, L, C)
         if pad_mask is not None:
             h = h.masked_fill(pad_mask[..., None], float('-inf'))
         out = h.max(dim=1).values           # (B, C)
