@@ -6,8 +6,8 @@ python map_rl_from_example/ppo_map.py \
     --num_eval_envs=20 \
     --eval_freq=20 \
     --total_timesteps=100_000_000 \
-    --num_steps=200 \
-    --num_eval_steps=200 \
+    --num_steps=250 \
+    --num_eval_steps=250 \
     --gamma=0.9 \
     --ent_coef=1e-3 \
     --learning_rate=3e-4 \
