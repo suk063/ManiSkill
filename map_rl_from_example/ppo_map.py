@@ -110,6 +110,8 @@ class Args:
     # Map-related arguments
     use_map: bool = False
     """if toggled, use the pre-trained environment map features as part of the observation"""
+    activate_map: bool = False
+    """Whether to activate the map features. If False, it will be an image-only model."""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
     freeze_dino_backbone: bool = True
@@ -192,6 +194,7 @@ class DINO2DFeatureEncoder(nn.Module):
         )
         self.embed_dim = embed_dim
         self.freeze_backbone = freeze_backbone
+        self.transform = transform
 
         if freeze_backbone:
             for p in self.backbone.parameters():
@@ -221,6 +224,7 @@ class DINO2DFeatureEncoder(nn.Module):
             images_bchw = images_bchw.float()
 
         B, _, H, W = images_bchw.shape
+        images_bchw = self.transform(images_bchw)
         
         if self.freeze_backbone:
             with torch.no_grad():
@@ -380,18 +384,17 @@ class NatureCNN(nn.Module):
             # to easily figure out the dimensions after flattening, we pass a test tensor
             with torch.no_grad():
                 sample_input = sample_obs["rgb"].float().permute(0,3,1,2) / 255.0
-                sample_input_transformed = transform(sample_input)
 
                 # Temporarily move to the target device for shape inference to avoid xformers error on CPU
                 if device and "cuda" in str(device):
                     cnn_tmp = cnn.to(device)
-                    sample_tmp = sample_input_transformed.to(device)
+                    sample_tmp = sample_input.to(device)
                     with autocast():
                         n_flatten = cnn_tmp(sample_tmp).shape[1]
                     # The cnn object itself is not moved, so it stays on CPU.
                 else:
                     # This will raise the xformers error if not on CUDA, which is expected.
-                    n_flatten = cnn(sample_input_transformed.cpu()).shape[1]
+                    n_flatten = cnn(sample_input.cpu()).shape[1]
                 
                 fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
         elif self.vision_encoder_name == "plain_cnn":
@@ -438,14 +441,14 @@ class NatureCNN(nn.Module):
 
         # Map-related components
         object.__setattr__(self, "_decoder", decoder)
-        self.use_map = use_map and (decoder is not None)
+        self.use_map = use_map
         if self.use_map:
             map_raw_dim = 768  # output dim of *decoder*
             self.map_encoder = PointNet(map_raw_dim, feature_size)
             self.out_features += feature_size
 
 
-    def forward(self, observations, env_target_obj_idx=None, map_features=None) -> torch.Tensor:
+    def forward(self, observations, env_target_obj_idx=None, map_features=None, activate_map: bool = True) -> torch.Tensor:
         encoded_tensor_list = []
         # self.extractors contain nn.Modules that do all the processing.
         for key, extractor in self.extractors.items():
@@ -453,8 +456,6 @@ class NatureCNN(nn.Module):
             if key == "rgb":
                 obs = obs.float().permute(0,3,1,2)
                 obs = obs / 255.0
-                if self.vision_encoder_name == "dino":
-                    obs = transform(obs)
             encoded_tensor_list.append(extractor(obs))
         
         if self.task_embedding is not None:
@@ -463,30 +464,40 @@ class NatureCNN(nn.Module):
             encoded_tensor_list.append(task_emb)
 
         if self.use_map:
-            assert map_features is not None, "map_features must be provided when use_map=True"
-            
-            coords_batch, raw_batch = [], []
-            for g in map_features:
-                coords = g.levels[1].coords
-                coords_batch.append(coords)
-                raw_batch.append(g.query_voxel_feature(coords))
+            if activate_map:
+                assert map_features is not None, "map_features must be provided when use_map=True"
+                
+                coords_batch, raw_batch = [], []
+                for g in map_features:
+                    coords = g.levels[1].coords
+                    coords_batch.append(coords)
+                    raw_batch.append(g.query_voxel_feature(coords))
 
-            # The decoder is pre-trained and used in inference mode.
-            with torch.no_grad():
-                dec_cat = self._decoder(torch.cat(raw_batch, dim=0))
-            
-            dec_split = dec_cat.split([c.size(0) for c in coords_batch], dim=0)
-            
-            lengths = [c.size(0) for c in coords_batch]
-            pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)
-            coords_padded = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)
-            Lmax = pad_3d.size(1)
+                # The decoder is pre-trained and used in inference mode.
+                with torch.no_grad():
+                    dec_cat = self._decoder(torch.cat(raw_batch, dim=0))
+                
+                dec_split = dec_cat.split([c.size(0) for c in coords_batch], dim=0)
+                
+                lengths = [c.size(0) for c in coords_batch]
+                pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)
+                coords_padded = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)
+                Lmax = pad_3d.size(1)
 
-            pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
-                    torch.tensor(lengths, device=pad_3d.device)[:, None]
-            
-            map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
-            encoded_tensor_list.append(map_vec)
+                pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
+                        torch.tensor(lengths, device=pad_3d.device)[:, None]
+                
+                map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
+                encoded_tensor_list.append(map_vec)
+            else:
+                # Get feature size from the map encoder's last layer
+                map_feature_size = self.map_encoder.net[-1].out_features
+                # Get batch size from any observation tensor
+                some_obs_tensor = next(iter(observations.values()))
+                batch_size = some_obs_tensor.shape[0]
+                device = some_obs_tensor.device
+                zero_map_vec = torch.zeros(batch_size, map_feature_size, device=device)
+                encoded_tensor_list.append(zero_map_vec)
 
         return torch.cat(encoded_tensor_list, dim=1)
 
@@ -508,15 +519,15 @@ class Agent(nn.Module):
         )
         self.actor_logstd = nn.Parameter(torch.ones(1, np.prod(envs.unwrapped.single_action_space.shape)) * -0.5)
 
-    def get_features(self, x, env_target_obj_idx=None, map_features=None):
-        return self.feature_net(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
+    def get_features(self, x, env_target_obj_idx=None, map_features=None, activate_map: bool = True):
+        return self.feature_net(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features, activate_map=activate_map)
 
-    def get_value(self, x, env_target_obj_idx=None, map_features=None):
-        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
+    def get_value(self, x, env_target_obj_idx=None, map_features=None, activate_map: bool = True):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features, activate_map=activate_map)
         return self.critic(x)
 
-    def get_action(self, x, env_target_obj_idx=None, map_features=None, deterministic=False):
-        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
+    def get_action(self, x, env_target_obj_idx=None, map_features=None, deterministic=False, activate_map: bool = True):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features, activate_map=activate_map)
         action_mean = self.actor_mean(x)
         if deterministic:
             return action_mean
@@ -525,8 +536,8 @@ class Agent(nn.Module):
         probs = Normal(action_mean, action_std)
         return probs.sample()
 
-    def get_action_and_value(self, x, env_target_obj_idx=None, map_features=None, action=None):
-        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
+    def get_action_and_value(self, x, env_target_obj_idx=None, map_features=None, action=None, activate_map: bool = True):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features, activate_map=activate_map)
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
@@ -568,7 +579,7 @@ if __name__ == "__main__":
 
     # --- Load Maps and Decoder ---
     all_grids, decoder = None, None
-    if args.use_map:
+    if args.use_map and args.activate_map:
         print("--- Loading maps and decoder for PPO training ---")
         try:
             decoder = ImplicitDecoder(
@@ -661,7 +672,7 @@ if __name__ == "__main__":
     # Create samplers for train/eval subsets of global envs and do initial resets with global_idx
     batch_train_envs = args.num_envs if not args.evaluate else 1
     
-    if args.use_map:
+    if args.use_map and args.activate_map:
         grid_sampler = GridSampler(all_grids, batch_train_envs, seed=args.seed)
     else:
         # Create a placeholder list to satisfy GridSampler API; we only need indices
@@ -673,7 +684,7 @@ if __name__ == "__main__":
     active_indices, grids = grid_sampler.sample()
     
     eval_grids = None
-    if args.use_map:
+    if args.use_map and args.activate_map:
         eval_grids = [all_grids[i] for i in eval_indices]
 
 
@@ -752,7 +763,7 @@ if __name__ == "__main__":
                         eval_infos['env_target_obj_idx_2'], 
                         eval_infos['env_target_obj_idx_1']
                     )
-                    action = agent.get_action(eval_obs, env_target_obj_idx=eval_target_obj_idx, map_features=eval_grids, deterministic=True)
+                    action = agent.get_action(eval_obs, env_target_obj_idx=eval_target_obj_idx, map_features=eval_grids, deterministic=True, activate_map=args.activate_map)
                     eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
                     if "final_info" in eval_infos:
                         mask = eval_infos["_final_info"]
@@ -794,7 +805,7 @@ if __name__ == "__main__":
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids)
+                action, logprob, _, value = agent.get_action_and_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids, activate_map=args.activate_map)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -833,7 +844,7 @@ if __name__ == "__main__":
                             final_info['env_target_obj_idx_1'][done_mask]
                         )
                         final_values[step, idx] = agent.get_value(
-                            final_obs, env_target_obj_idx=final_env_target_obj_idx, map_features=final_grids
+                            final_obs, env_target_obj_idx=final_env_target_obj_idx, map_features=final_grids, activate_map=args.activate_map
                         ).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
@@ -844,7 +855,7 @@ if __name__ == "__main__":
                 next_env_target_obj_idx_2,
                 next_env_target_obj_idx_1
             )
-            next_value = agent.get_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids).reshape(1, -1)
+            next_value = agent.get_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids, activate_map=args.activate_map).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -910,7 +921,8 @@ if __name__ == "__main__":
                     b_obs[mb_inds],
                     env_target_obj_idx=b_env_target_obj_idxs[mb_inds],
                     map_features=mb_grids,
-                    action=b_actions[mb_inds]
+                    action=b_actions[mb_inds],
+                    activate_map=args.activate_map,
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
