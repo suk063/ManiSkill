@@ -194,10 +194,7 @@ class DINO2DFeatureEncoder(nn.Module):
         )
         self.embed_dim = embed_dim
         self.freeze_backbone = freeze_backbone
-<<<<<<< HEAD
-=======
         self.transform = transform
->>>>>>> map_rl
 
         if freeze_backbone:
             for p in self.backbone.parameters():
@@ -227,10 +224,7 @@ class DINO2DFeatureEncoder(nn.Module):
             images_bchw = images_bchw.float()
 
         B, _, H, W = images_bchw.shape
-<<<<<<< HEAD
-=======
         images_bchw = self.transform(images_bchw)
->>>>>>> map_rl
         
         if self.freeze_backbone:
             with torch.no_grad():
@@ -390,29 +384,17 @@ class NatureCNN(nn.Module):
             # to easily figure out the dimensions after flattening, we pass a test tensor
             with torch.no_grad():
                 sample_input = sample_obs["rgb"].float().permute(0,3,1,2) / 255.0
-<<<<<<< HEAD
-                sample_input_transformed = transform(sample_input)
-=======
->>>>>>> map_rl
 
                 # Temporarily move to the target device for shape inference to avoid xformers error on CPU
                 if device and "cuda" in str(device):
                     cnn_tmp = cnn.to(device)
-<<<<<<< HEAD
-                    sample_tmp = sample_input_transformed.to(device)
-=======
                     sample_tmp = sample_input.to(device)
->>>>>>> map_rl
                     with autocast():
                         n_flatten = cnn_tmp(sample_tmp).shape[1]
                     # The cnn object itself is not moved, so it stays on CPU.
                 else:
                     # This will raise the xformers error if not on CUDA, which is expected.
-<<<<<<< HEAD
-                    n_flatten = cnn(sample_input_transformed.cpu()).shape[1]
-=======
                     n_flatten = cnn(sample_input.cpu()).shape[1]
->>>>>>> map_rl
                 
                 fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
         elif self.vision_encoder_name == "plain_cnn":
@@ -478,8 +460,6 @@ class NatureCNN(nn.Module):
             if key == "rgb":
                 obs = obs.float().permute(0,3,1,2)
                 obs = obs / 255.0
-                if self.vision_encoder_name == "dino":
-                    obs = transform(obs)
             encoded_tensor_list.append(extractor(obs))
         
         if self.task_embedding is not None:
