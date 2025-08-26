@@ -110,11 +110,8 @@ class Args:
     # Map-related arguments
     use_map: bool = False
     """if toggled, use the pre-trained environment map features as part of the observation"""
-<<<<<<< HEAD
-=======
-    activate_map: bool = False
-    """Whether to activate the map features. If False, it will be an image-only model."""
->>>>>>> map_rl
+    start_condition_map: bool = False
+    """If toggled, the map conditioning gate becomes learnable."""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
     freeze_dino_backbone: bool = True
@@ -370,7 +367,7 @@ class GridSampler:
 
 
 class NatureCNN(nn.Module):
-    def __init__(self, sample_obs, vision_encoder: str, freeze_dino_backbone: bool, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None):
+    def __init__(self, sample_obs, vision_encoder: str, freeze_dino_backbone: bool, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False):
         super().__init__()
         self.vision_encoder_name = vision_encoder
         self.vision_encoder = None
@@ -462,14 +459,18 @@ class NatureCNN(nn.Module):
 
         # Map-related components
         object.__setattr__(self, "_decoder", decoder)
-        self.use_map = use_map
+        self.use_map = use_map and (decoder is not None)
+        self.start_condition_map = start_condition_map
         if self.use_map:
             map_raw_dim = 768  # output dim of *decoder*
             self.map_encoder = PointNet(map_raw_dim, feature_size)
             self.out_features += feature_size
+            self.map_gate = nn.Parameter(torch.tensor(0.0))
+            if not self.start_condition_map:
+                self.map_gate.requires_grad = False
 
 
-    def forward(self, observations, env_target_obj_idx=None, map_features=None, activate_map: bool = True) -> torch.Tensor:
+    def forward(self, observations, env_target_obj_idx=None, map_features=None) -> torch.Tensor:
         encoded_tensor_list = []
         # self.extractors contain nn.Modules that do all the processing.
         for key, extractor in self.extractors.items():
@@ -487,8 +488,8 @@ class NatureCNN(nn.Module):
             encoded_tensor_list.append(task_emb)
 
         if self.use_map:
-            if activate_map:
-                assert map_features is not None, "map_features must be provided when use_map=True"
+            if self.start_condition_map:
+                assert map_features is not None, "map_features must be provided when use_map=True and start_condition_map=True"
                 
                 coords_batch, raw_batch = [], []
                 for g in map_features:
@@ -511,7 +512,7 @@ class NatureCNN(nn.Module):
                         torch.tensor(lengths, device=pad_3d.device)[:, None]
                 
                 map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
-                encoded_tensor_list.append(map_vec)
+                encoded_tensor_list.append(self.map_gate * map_vec)
             else:
                 # Get feature size from the map encoder's last layer
                 map_feature_size = self.map_encoder.net[-1].out_features
@@ -525,9 +526,9 @@ class NatureCNN(nn.Module):
         return torch.cat(encoded_tensor_list, dim=1)
 
 class Agent(nn.Module):
-    def __init__(self, envs, sample_obs, vision_encoder: str, freeze_dino_backbone: bool, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None):
+    def __init__(self, envs, sample_obs, vision_encoder: str, freeze_dino_backbone: bool, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False):
         super().__init__()
-        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, freeze_dino_backbone=freeze_dino_backbone, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device)
+        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, freeze_dino_backbone=freeze_dino_backbone, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map)
         # latent_size = np.array(envs.unwrapped.single_observation_space.shape).prod()
         latent_size = self.feature_net.out_features
         self.critic = nn.Sequential(
@@ -542,15 +543,15 @@ class Agent(nn.Module):
         )
         self.actor_logstd = nn.Parameter(torch.ones(1, np.prod(envs.unwrapped.single_action_space.shape)) * -0.5)
 
-    def get_features(self, x, env_target_obj_idx=None, map_features=None, activate_map: bool = True):
-        return self.feature_net(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features, activate_map=activate_map)
+    def get_features(self, x, env_target_obj_idx=None, map_features=None):
+        return self.feature_net(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
 
-    def get_value(self, x, env_target_obj_idx=None, map_features=None, activate_map: bool = True):
-        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features, activate_map=activate_map)
+    def get_value(self, x, env_target_obj_idx=None, map_features=None):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
         return self.critic(x)
 
-    def get_action(self, x, env_target_obj_idx=None, map_features=None, deterministic=False, activate_map: bool = True):
-        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features, activate_map=activate_map)
+    def get_action(self, x, env_target_obj_idx=None, map_features=None, deterministic=False):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
         action_mean = self.actor_mean(x)
         if deterministic:
             return action_mean
@@ -559,8 +560,8 @@ class Agent(nn.Module):
         probs = Normal(action_mean, action_std)
         return probs.sample()
 
-    def get_action_and_value(self, x, env_target_obj_idx=None, map_features=None, action=None, activate_map: bool = True):
-        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features, activate_map=activate_map)
+    def get_action_and_value(self, x, env_target_obj_idx=None, map_features=None, action=None):
+        x = self.get_features(x, env_target_obj_idx=env_target_obj_idx, map_features=map_features)
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
@@ -602,7 +603,7 @@ if __name__ == "__main__":
 
     # --- Load Maps and Decoder ---
     all_grids, decoder = None, None
-    if args.use_map and args.activate_map:
+    if args.use_map:
         print("--- Loading maps and decoder for PPO training ---")
         try:
             decoder = ImplicitDecoder(
@@ -619,23 +620,24 @@ if __name__ == "__main__":
             print(f"[ERROR] Decoder file not found at {args.decoder_path}. Exiting.")
             exit()
 
-        all_grids = []
-        if not os.path.exists(args.map_dir):
-            print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
-            exit()
-
-        print(f"Loading {args.total_envs} maps from {args.map_dir} ...")
-        for i in range(args.total_envs):
-            grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.sparse.pt")
-            if not os.path.exists(grid_path):
-                print(f"[ERROR] Map file not found: {grid_path}. Exiting.")
+        if args.start_condition_map:
+            all_grids = []
+            if not os.path.exists(args.map_dir):
+                print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
                 exit()
-            all_grids.append(VoxelHashTable.load_sparse(grid_path, device=device))
-        print(f"--- Loaded {len(all_grids)} maps. ---")
 
-        for grid in all_grids:
-            for p in grid.parameters():
-                p.requires_grad = False
+            print(f"Loading {args.total_envs} maps from {args.map_dir} ...")
+            for i in range(args.total_envs):
+                grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.sparse.pt")
+                if not os.path.exists(grid_path):
+                    print(f"[ERROR] Map file not found: {grid_path}. Exiting.")
+                    exit()
+                all_grids.append(VoxelHashTable.load_sparse(grid_path, device=device))
+            print(f"--- Loaded {len(all_grids)} maps. ---")
+
+            for grid in all_grids:
+                for p in grid.parameters():
+                    p.requires_grad = False
 
     # env setup
     env_kwargs = dict(obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda")
@@ -695,7 +697,7 @@ if __name__ == "__main__":
     # Create samplers for train/eval subsets of global envs and do initial resets with global_idx
     batch_train_envs = args.num_envs if not args.evaluate else 1
     
-    if args.use_map and args.activate_map:
+    if args.use_map and args.start_condition_map:
         grid_sampler = GridSampler(all_grids, batch_train_envs, seed=args.seed)
     else:
         # Create a placeholder list to satisfy GridSampler API; we only need indices
@@ -707,7 +709,7 @@ if __name__ == "__main__":
     active_indices, grids = grid_sampler.sample()
     
     eval_grids = None
-    if args.use_map and args.activate_map:
+    if args.use_map and args.start_condition_map:
         eval_grids = [all_grids[i] for i in eval_indices]
 
 
@@ -733,7 +735,7 @@ if __name__ == "__main__":
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
     print(f"args.minibatch_size={args.minibatch_size} args.batch_size={args.batch_size} args.update_epochs={args.update_epochs}")
     print(f"####")
-    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, freeze_dino_backbone=args.freeze_dino_backbone, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device).to(device)
+    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, freeze_dino_backbone=args.freeze_dino_backbone, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map).to(device)
     
     params_to_update = agent.parameters()
     if args.vision_encoder == "dino" and args.freeze_dino_backbone:
@@ -786,7 +788,7 @@ if __name__ == "__main__":
                         eval_infos['env_target_obj_idx_2'], 
                         eval_infos['env_target_obj_idx_1']
                     )
-                    action = agent.get_action(eval_obs, env_target_obj_idx=eval_target_obj_idx, map_features=eval_grids, deterministic=True, activate_map=args.activate_map)
+                    action = agent.get_action(eval_obs, env_target_obj_idx=eval_target_obj_idx, map_features=eval_grids, deterministic=True)
                     eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
                     if "final_info" in eval_infos:
                         mask = eval_infos["_final_info"]
@@ -828,7 +830,7 @@ if __name__ == "__main__":
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids, activate_map=args.activate_map)
+                action, logprob, _, value = agent.get_action_and_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids)
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -867,7 +869,7 @@ if __name__ == "__main__":
                             final_info['env_target_obj_idx_1'][done_mask]
                         )
                         final_values[step, idx] = agent.get_value(
-                            final_obs, env_target_obj_idx=final_env_target_obj_idx, map_features=final_grids, activate_map=args.activate_map
+                            final_obs, env_target_obj_idx=final_env_target_obj_idx, map_features=final_grids
                         ).view(-1)
         rollout_time = time.perf_counter() - rollout_time
         cumulative_times["rollout_time"] += rollout_time
@@ -878,7 +880,7 @@ if __name__ == "__main__":
                 next_env_target_obj_idx_2,
                 next_env_target_obj_idx_1
             )
-            next_value = agent.get_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids, activate_map=args.activate_map).reshape(1, -1)
+            next_value = agent.get_value(next_obs, env_target_obj_idx=next_env_target_obj_idx, map_features=grids).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
@@ -939,13 +941,12 @@ if __name__ == "__main__":
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                mb_grids = [grids[i % args.num_envs] for i in mb_inds] if args.use_map else None
+                mb_grids = [grids[i % args.num_envs] for i in mb_inds] if args.use_map and args.start_condition_map else None
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(
                     b_obs[mb_inds],
                     env_target_obj_idx=b_env_target_obj_idxs[mb_inds],
                     map_features=mb_grids,
-                    action=b_actions[mb_inds],
-                    activate_map=args.activate_map,
+                    action=b_actions[mb_inds]
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()

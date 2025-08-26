@@ -20,4 +20,4 @@ python map_rl_from_example/ppo_map.py \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
-    # --activate_map
+    # --start_condition_map
