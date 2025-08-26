@@ -244,9 +244,9 @@ class PointNet(nn.Module):
             layer_init(nn.Linear(input_dim + pe_dim, 256)),
             nn.LayerNorm(256),
             nn.GELU(),
-            # layer_init(nn.Linear(256, 256)),
-            # nn.LayerNorm(256),
-            # nn.GELU(),
+            layer_init(nn.Linear(256, 256)),
+            nn.LayerNorm(256),
+            nn.GELU(),
             layer_init(nn.Linear(256, output_dim)),
         )
 
