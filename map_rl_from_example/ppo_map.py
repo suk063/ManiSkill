@@ -19,6 +19,8 @@ import tyro
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn.functional as F
+from torchvision import transforms
+from torch.cuda.amp import autocast
 
 # ManiSkill specific imports
 import mani_skill.envs
@@ -30,6 +32,17 @@ from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 # Mapping-related imports
 from mapping.mapping_lib.voxel_hash_table import VoxelHashTable
 from mapping.mapping_lib.implicit_decoder import ImplicitDecoder
+
+
+transform = transforms.Compose(
+    [
+        transforms.Resize(size=224, interpolation=transforms.InterpolationMode.BICUBIC, antialias=True),
+        transforms.Normalize(
+            mean=(0.48145466, 0.4578275, 0.40821073),
+            std=(0.26862954, 0.26130258, 0.27577711),
+        ),
+    ]
+)
 
 
 @dataclass
@@ -91,12 +104,16 @@ class Args:
     total_envs: int = 100
     """Total number of discrete environments available for sampling with global_idx"""
     # task specification
-    model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon"])
+    model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "011_banana", "012_strawberry", "017_orange"])
     """the list of model ids to use for the environment"""
     
     # Map-related arguments
     use_map: bool = False
     """if toggled, use the pre-trained environment map features as part of the observation"""
+    vision_encoder: str = "dino" # "plain_cnn" or "dino"
+    """the vision encoder to use for the agent"""
+    freeze_dino_backbone: bool = True
+    """if toggled, freeze the DINO backbone"""
     map_dir: str = "mapping/multi_env_maps_custom"
     """Directory where the trained environment maps are stored."""
     decoder_path: str = "mapping/multi_env_maps_custom/shared_decoder.pt"
@@ -148,6 +165,75 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
+
+class DINO2DFeatureEncoder(nn.Module):
+    """
+    Thin wrapper around DINOv2 ViT-S/14 to produce dense 2D feature maps.
+    Inputs are expected in shape (B, C, H, W) with values in [0, 1].
+    Normalization is applied internally.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 64,
+        model_name: str = "dinov2_vits14",
+        freeze_backbone: bool = True,
+    ) -> None:
+        super().__init__()
+
+        # Load backbone lazily via torch.hub to avoid extra dependencies
+        self.backbone = torch.hub.load("facebookresearch/dinov2", model_name)
+        self.dino_output_dim = 384
+        self.dino_head = nn.Sequential(
+            nn.Conv2d(self.dino_output_dim, 256, kernel_size=1, bias=False),
+            nn.GroupNorm(1, 256),  # Equivalent to LayerNorm for channels
+            nn.GELU(),
+            nn.Conv2d(256, embed_dim, kernel_size=1),
+        )
+        self.embed_dim = embed_dim
+        self.freeze_backbone = freeze_backbone
+
+        if freeze_backbone:
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+
+    def _forward_dino_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Returns per-patch token embeddings without the [CLS] token.
+        Shape: (B, N, C), where N = (H/14)*(W/14), C = embed_dim.
+        """
+        x = self.backbone.prepare_tokens_with_masks(x)
+        for blk in self.backbone.blocks:
+            x = blk(x)
+        x = self.backbone.norm(x)  # (B, 1 + N, C)
+        x = x[:, 1:, :]            # drop CLS → (B, N, C)
+        return x
+
+    def forward(self, images_bchw: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            images_bchw: Float tensor in [0, 1], shape (B, 3, H, W)
+
+        Returns:
+            fmap: (B, C, Hf, Wf) where C = embed_dim and Hf = H//14, Wf = W//14
+        """
+        if images_bchw.dtype != torch.float32:
+            images_bchw = images_bchw.float()
+
+        B, _, H, W = images_bchw.shape
+        
+        if self.freeze_backbone:
+            with torch.no_grad():
+                tokens = self._forward_dino_tokens(images_bchw)
+        else:
+            tokens = self._forward_dino_tokens(images_bchw)
+
+        C = self.dino_output_dim
+        Hf, Wf = H // 14, W // 14
+        fmap = tokens.permute(0, 2, 1).reshape(B, C, Hf, Wf).contiguous()
+        fmap = self.dino_head(fmap)
+        
+        return fmap
 
 class PointNet(nn.Module):
     def __init__(self, input_dim, output_dim=256, L=10):
@@ -271,9 +357,10 @@ class GridSampler:
 
 
 class NatureCNN(nn.Module):
-    def __init__(self, sample_obs, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False):
+    def __init__(self, sample_obs, vision_encoder: str, freeze_dino_backbone: bool, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None):
         super().__init__()
-
+        self.vision_encoder_name = vision_encoder
+        self.vision_encoder = None
         extractors = {}
 
         self.out_features = 0
@@ -283,30 +370,56 @@ class NatureCNN(nn.Module):
 
 
         # here we use a NatureCNN architecture to process images, but any architecture is permissble here
-        cnn = nn.Sequential(
-            nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=32,
-                kernel_size=8,
-                stride=4,
-                padding=0,
-            ),
-            nn.ReLU(),
-            nn.Conv2d(
-                in_channels=32, out_channels=64, kernel_size=4, stride=2, padding=0
-            ),
-            nn.ReLU(),
-            nn.Conv2d(
-                in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=0
-            ),
-            nn.ReLU(),
-            nn.Flatten(),
-        )
+        if self.vision_encoder_name == "dino":
+            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64, freeze_backbone=freeze_dino_backbone)
+            cnn = nn.Sequential(
+                self.vision_encoder,
+                nn.Flatten(),
+            )
 
-        # to easily figure out the dimensions after flattening, we pass a test tensor
-        with torch.no_grad():
-            n_flatten = cnn(sample_obs["rgb"].float().permute(0,3,1,2).cpu()).shape[1]
-            fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
+            # to easily figure out the dimensions after flattening, we pass a test tensor
+            with torch.no_grad():
+                sample_input = sample_obs["rgb"].float().permute(0,3,1,2) / 255.0
+                sample_input_transformed = transform(sample_input)
+
+                # Temporarily move to the target device for shape inference to avoid xformers error on CPU
+                if device and "cuda" in str(device):
+                    cnn_tmp = cnn.to(device)
+                    sample_tmp = sample_input_transformed.to(device)
+                    with autocast():
+                        n_flatten = cnn_tmp(sample_tmp).shape[1]
+                    # The cnn object itself is not moved, so it stays on CPU.
+                else:
+                    # This will raise the xformers error if not on CUDA, which is expected.
+                    n_flatten = cnn(sample_input_transformed.cpu()).shape[1]
+                
+                fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
+        elif self.vision_encoder_name == "plain_cnn":
+            cnn = nn.Sequential(
+                nn.Conv2d(
+                    in_channels=in_channels,
+                    out_channels=32,
+                    kernel_size=8,
+                    stride=4,
+                    padding=0,
+                ),
+                nn.ReLU(),
+                nn.Conv2d(
+                    in_channels=32, out_channels=64, kernel_size=4, stride=2, padding=0
+                ),
+                nn.ReLU(),
+                nn.Conv2d(
+                    in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=0
+                ),
+                nn.ReLU(),
+                nn.Flatten(),
+            )
+            # to easily figure out the dimensions after flattening, we pass a test tensor
+            with torch.no_grad():
+                n_flatten = cnn(sample_obs["rgb"].float().permute(0,3,1,2).cpu()).shape[1]
+                fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
+        else:
+            raise ValueError(f"Unknown vision_encoder: {self.vision_encoder_name}")
         extractors["rgb"] = nn.Sequential(cnn, fc)
         self.out_features += feature_size
 
@@ -340,6 +453,8 @@ class NatureCNN(nn.Module):
             if key == "rgb":
                 obs = obs.float().permute(0,3,1,2)
                 obs = obs / 255.0
+                if self.vision_encoder_name == "dino":
+                    obs = transform(obs)
             encoded_tensor_list.append(extractor(obs))
         
         if self.task_embedding is not None:
@@ -376,9 +491,9 @@ class NatureCNN(nn.Module):
         return torch.cat(encoded_tensor_list, dim=1)
 
 class Agent(nn.Module):
-    def __init__(self, envs, sample_obs, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False):
+    def __init__(self, envs, sample_obs, vision_encoder: str, freeze_dino_backbone: bool, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None):
         super().__init__()
-        self.feature_net = NatureCNN(sample_obs=sample_obs, num_tasks=num_tasks, decoder=decoder, use_map=use_map)
+        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, freeze_dino_backbone=freeze_dino_backbone, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device)
         # latent_size = np.array(envs.unwrapped.single_observation_space.shape).prod()
         latent_size = self.feature_net.out_features
         self.critic = nn.Sequential(
@@ -584,8 +699,14 @@ if __name__ == "__main__":
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
     print(f"args.minibatch_size={args.minibatch_size} args.batch_size={args.batch_size} args.update_epochs={args.update_epochs}")
     print(f"####")
-    agent = Agent(envs, sample_obs=next_obs, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, freeze_dino_backbone=args.freeze_dino_backbone, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device).to(device)
+    
+    params_to_update = agent.parameters()
+    if args.vision_encoder == "dino" and args.freeze_dino_backbone:
+        print("--- DINO backbone is frozen, excluding from optimizer ---")
+        dino_backbone_params_ids = set(map(id, agent.feature_net.vision_encoder.backbone.parameters()))
+        params_to_update = [p for p in agent.parameters() if id(p) not in dino_backbone_params_ids]
+    optimizer = optim.Adam(params_to_update, lr=args.learning_rate, eps=1e-5)
 
     if args.checkpoint:
         print(f"Loading checkpoint from {args.checkpoint}")
