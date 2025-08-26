@@ -5,7 +5,7 @@ python map_rl_from_example/ppo_map.py \
     --num_envs=50 \
     --num_eval_envs=20 \
     --eval_freq=20 \
-    --total_timesteps=100_000_000 \
+    --total_timesteps=50_000_000 \
     --num_steps=400 \
     --num_eval_steps=400 \
     --gamma=0.9 \

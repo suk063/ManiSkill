@@ -419,7 +419,7 @@ class NatureCNN(nn.Module):
             )
             # to easily figure out the dimensions after flattening, we pass a test tensor
             with torch.no_grad():
-                n_flatten = cnn(sample_obs["rgb"].float().permute(0,3,1,2).cpu()).shape[1]
+                n_flatten = cnn(sample_obs["rgb"].float().permute(0,3,1,2).cpu() / 255.0).shape[1]
                 fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
         else:
             raise ValueError(f"Unknown vision_encoder: {self.vision_encoder_name}")
