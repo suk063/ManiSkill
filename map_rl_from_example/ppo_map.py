@@ -114,8 +114,6 @@ class Args:
     """If toggled, the map conditioning gate becomes learnable."""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
-    freeze_dino_backbone: bool = True
-    """if toggled, freeze the DINO backbone"""
     map_dir: str = "mapping/multi_env_maps_custom"
     """Directory where the trained environment maps are stored."""
     decoder_path: str = "mapping/multi_env_maps_custom/shared_decoder.pt"
@@ -179,7 +177,6 @@ class DINO2DFeatureEncoder(nn.Module):
         self,
         embed_dim: int = 64,
         model_name: str = "dinov2_vits14",
-        freeze_backbone: bool = True,
     ) -> None:
         super().__init__()
 
@@ -193,12 +190,10 @@ class DINO2DFeatureEncoder(nn.Module):
             nn.Conv2d(256, embed_dim, kernel_size=1),
         )
         self.embed_dim = embed_dim
-        self.freeze_backbone = freeze_backbone
         self.transform = transform
 
-        if freeze_backbone:
-            for p in self.backbone.parameters():
-                p.requires_grad = False
+        for p in self.backbone.parameters():
+            p.requires_grad = False
 
     def _forward_dino_tokens(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -226,10 +221,7 @@ class DINO2DFeatureEncoder(nn.Module):
         B, _, H, W = images_bchw.shape
         images_bchw = self.transform(images_bchw)
         
-        if self.freeze_backbone:
-            with torch.no_grad():
-                tokens = self._forward_dino_tokens(images_bchw)
-        else:
+        with torch.no_grad():
             tokens = self._forward_dino_tokens(images_bchw)
 
         C = self.dino_output_dim
@@ -361,7 +353,7 @@ class GridSampler:
 
 
 class NatureCNN(nn.Module):
-    def __init__(self, sample_obs, vision_encoder: str, freeze_dino_backbone: bool, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False):
+    def __init__(self, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False):
         super().__init__()
         self.vision_encoder_name = vision_encoder
         self.vision_encoder = None
@@ -375,7 +367,7 @@ class NatureCNN(nn.Module):
 
         # here we use a NatureCNN architecture to process images, but any architecture is permissble here
         if self.vision_encoder_name == "dino":
-            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64, freeze_backbone=freeze_dino_backbone)
+            self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64)
             cnn = nn.Sequential(
                 self.vision_encoder,
                 nn.Flatten(),
@@ -506,9 +498,9 @@ class NatureCNN(nn.Module):
         return torch.cat(encoded_tensor_list, dim=1)
 
 class Agent(nn.Module):
-    def __init__(self, envs, sample_obs, vision_encoder: str, freeze_dino_backbone: bool, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False):
+    def __init__(self, envs, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False):
         super().__init__()
-        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, freeze_dino_backbone=freeze_dino_backbone, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map)
+        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map)
         # latent_size = np.array(envs.unwrapped.single_observation_space.shape).prod()
         latent_size = self.feature_net.out_features
         self.critic = nn.Sequential(
@@ -715,10 +707,10 @@ if __name__ == "__main__":
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
     print(f"args.minibatch_size={args.minibatch_size} args.batch_size={args.batch_size} args.update_epochs={args.update_epochs}")
     print(f"####")
-    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, freeze_dino_backbone=args.freeze_dino_backbone, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map).to(device)
+    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map).to(device)
     
     params_to_update = agent.parameters()
-    if args.vision_encoder == "dino" and args.freeze_dino_backbone:
+    if args.vision_encoder == "dino":
         print("--- DINO backbone is frozen, excluding from optimizer ---")
         dino_backbone_params_ids = set(map(id, agent.feature_net.vision_encoder.backbone.parameters()))
         params_to_update = [p for p in agent.parameters() if id(p) not in dino_backbone_params_ids]
@@ -789,7 +781,8 @@ if __name__ == "__main__":
                 break
         if args.save_model and iteration % args.eval_freq == 1:
             model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
-            torch.save(agent.state_dict(), model_path)
+            state_dict_to_save = {k: v for k, v in agent.state_dict().items() if not k.startswith('feature_net.vision_encoder.backbone.')}
+            torch.save(state_dict_to_save, model_path)
             print(f"model saved to {model_path}")
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
@@ -999,7 +992,8 @@ if __name__ == "__main__":
         logger.add_scalar("time/total_rollout+update_time", cumulative_times["rollout_time"] + cumulative_times["update_time"], global_step)
     if args.save_model and not args.evaluate:
         model_path = f"runs/{run_name}/final_ckpt.pt"
-        torch.save(agent.state_dict(), model_path)
+        state_dict_to_save = {k: v for k, v in agent.state_dict().items() if not k.startswith('feature_net.vision_encoder.backbone.')}
+        torch.save(state_dict_to_save, model_path)
         print(f"model saved to {model_path}")
 
     envs.close()
