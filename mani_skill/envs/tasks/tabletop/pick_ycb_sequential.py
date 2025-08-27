@@ -21,7 +21,7 @@ from sapien.physx import PhysxRigidBodyComponent
 from sapien.render import RenderBodyComponent
 
 
-@register_env("PickYCBSequential-v1", max_episode_steps=400)
+@register_env("PickYCBSequential-v1", max_episode_steps=200)
 class PickYCBSequentialEnv(BaseEnv):
 
     SUPPORTED_ROBOTS = [
@@ -36,8 +36,8 @@ class PickYCBSequentialEnv(BaseEnv):
     human_cam_eye_pos = [0.6, 0.7, 0.6]
     human_cam_target_pos = [0.0, 0.0, 0.35]
     
-    basket_half_size = 0.0554 # 44.2964 (original_size) * 0.0025 (scale) / 2.0
-    basket_pos_offset = torch.tensor([0, 0, 0.09458])
+    basket_half_size = 0.04729 # 44.2964 (original_size) * 0.002135 (scale) / 2.0
+    basket_pos_offset = torch.tensor([0, 0, 0.08081])
 
     def __init__(self, *args, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.1, camera_uids: Union[str, List[str]]="hand_camera", **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
