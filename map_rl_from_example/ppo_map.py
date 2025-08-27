@@ -214,7 +214,10 @@ if __name__ == "__main__":
                     p.requires_grad = False
 
     # env setup
-    env_kwargs = dict(obs_mode="rgb+depth", render_mode=args.render_mode, sim_backend="physx_cuda")
+    if args.use_local_fusion:
+        env_kwargs = dict(obs_mode="rgb+depth", render_mode=args.render_mode, sim_backend="physx_cuda")
+    else:
+        env_kwargs = dict(obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda")
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
