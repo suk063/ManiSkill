@@ -12,9 +12,10 @@ python map_rl_from_example/ppo_map.py \
     --ent_coef=1e-3 \
     --learning_rate=3e-4 \
     --vision_encoder=dino \
-    --freeze_dino_backbone \
     --capture-video \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
-    --start_condition_map
+    --start_condition_map \
+    # --use_local_fusion \
+    --checkpoint "save_checkpoint/image_2_stage.pt"

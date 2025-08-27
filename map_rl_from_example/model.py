@@ -1,10 +1,15 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Optional
+from typing import Optional, List
 from torch.cuda.amp import autocast
 from torch.distributions.normal import Normal
 from torchvision import transforms
+import torch.nn.functional as F
+from torch_geometric.nn import MLP, PointTransformerConv
+from torch_geometric.nn.pool import radius
+from torch_geometric.utils import to_dense_batch
+from map_rl_from_example.operator import get_3d_coordinates
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -134,11 +139,10 @@ class PointNet(nn.Module):
 
 
 class NatureCNN(nn.Module):
-    def __init__(self, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False):
+    def __init__(self, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False):
         super().__init__()
         self.vision_encoder_name = vision_encoder
         self.vision_encoder = None
-        extractors = {}
 
         self.out_features = 0
         feature_size = 256
@@ -149,10 +153,9 @@ class NatureCNN(nn.Module):
         # here we use a NatureCNN architecture to process images, but any architecture is permissble here
         if self.vision_encoder_name == "dino":
             self.vision_encoder = DINO2DFeatureEncoder(embed_dim=64)
-            cnn = nn.Sequential(
-                self.vision_encoder,
-                nn.Flatten(),
-            )
+            self.embed_dim = self.vision_encoder.embed_dim
+            self.cnn_part = self.vision_encoder
+            self.flatten_part = nn.Flatten()
 
             # to easily figure out the dimensions after flattening, we pass a test tensor
             with torch.no_grad():
@@ -160,18 +163,19 @@ class NatureCNN(nn.Module):
 
                 # Temporarily move to the target device for shape inference to avoid xformers error on CPU
                 if device and "cuda" in str(device):
-                    cnn_tmp = cnn.to(device)
+                    cnn_tmp = self.cnn_part.to(device)
                     sample_tmp = sample_input.to(device)
                     with autocast():
-                        n_flatten = cnn_tmp(sample_tmp).shape[1]
+                        n_flatten = self.flatten_part(cnn_tmp(sample_tmp)).shape[1]
                     # The cnn object itself is not moved, so it stays on CPU.
                 else:
                     # This will raise the xformers error if not on CUDA, which is expected.
-                    n_flatten = cnn(sample_input.cpu()).shape[1]
+                    n_flatten = self.flatten_part(self.cnn_part(sample_input.cpu())).shape[1]
                 
-                fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
+                self.fc_part = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
         elif self.vision_encoder_name == "plain_cnn":
-            cnn = nn.Sequential(
+            self.embed_dim = 64
+            self.cnn_part = nn.Sequential(
                 nn.Conv2d(
                     in_channels=in_channels,
                     out_channels=32,
@@ -185,24 +189,24 @@ class NatureCNN(nn.Module):
                 ),
                 nn.ReLU(),
                 nn.Conv2d(
-                    in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=0
+                    in_channels=64, out_channels=self.embed_dim, kernel_size=3, stride=1, padding=0
                 ),
                 nn.ReLU(),
-                nn.Flatten(),
             )
+            self.flatten_part = nn.Flatten()
             # to easily figure out the dimensions after flattening, we pass a test tensor
             with torch.no_grad():
-                n_flatten = cnn(sample_obs["rgb"].float().permute(0,3,1,2).cpu() / 255.0).shape[1]
-                fc = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
+                n_flatten = self.flatten_part(self.cnn_part(sample_obs["rgb"].float().permute(0,3,1,2).cpu() / 255.0)).shape[1]
+                self.fc_part = nn.Sequential(nn.Linear(n_flatten, feature_size), nn.ReLU())
         else:
             raise ValueError(f"Unknown vision_encoder: {self.vision_encoder_name}")
-        extractors["rgb"] = nn.Sequential(cnn, fc)
         self.out_features += feature_size
 
+        self.state_extractor = None
         if "state" in sample_obs:
             # for state data we simply pass it through a single linear layer
             state_size = sample_obs["state"].shape[-1]
-            extractors["state"] = nn.Linear(state_size, 256)
+            self.state_extractor = nn.Linear(state_size, 256)
             self.out_features += 256
 
         self.task_embedding = None
@@ -210,12 +214,11 @@ class NatureCNN(nn.Module):
             self.task_embedding = nn.Embedding(num_tasks, feature_size)
             self.out_features += feature_size
 
-        self.extractors = nn.ModuleDict(extractors)
-
         # Map-related components
         object.__setattr__(self, "_decoder", decoder)
         self.use_map = use_map and (decoder is not None)
         self.start_condition_map = start_condition_map
+        self.use_local_fusion = self.use_map and use_local_fusion
         if self.use_map:
             map_raw_dim = 768  # output dim of *decoder*
             self.map_encoder = PointNet(map_raw_dim, feature_size)
@@ -223,23 +226,71 @@ class NatureCNN(nn.Module):
             self.map_gate = nn.Parameter(torch.tensor(0.0))
             if not self.start_condition_map:
                 self.map_gate.requires_grad = False
+            
+            if self.use_local_fusion:
+                self.map_feature_proj = nn.Linear(map_raw_dim, self.embed_dim)
+                self.local_fusion = LocalFeatureFusion(dim=self.embed_dim, k=2, radius=0.12, num_layers=1)
 
+
+    def _local_fusion(
+        self,
+        observations: dict,
+        image_fmap: torch.Tensor,
+        coords_batch: List[torch.Tensor],
+        dec_split: List[torch.Tensor],
+    ) -> torch.Tensor:
+        B = image_fmap.size(0)
+
+        kv_xyz = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)  # (B,Lmax,3)
+        kv_raw = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)     # (B,Lmax,768)
+
+        Lmax = kv_xyz.size(1)
+        pad_mask = torch.arange(Lmax, device=kv_xyz.device).expand(B, -1)
+        pad_mask = pad_mask >= torch.tensor(
+            [c.size(0) for c in coords_batch], device=kv_xyz.device
+        ).unsqueeze(1)  # (B,Lmax)
+
+        kv_feat = self.map_feature_proj(kv_raw)  # (B,Lmax,embed_dim)
+
+        depth = observations["depth"].permute(0, 3, 1, 2).float() / 1000.0
+        pose = observations["sensor_param"]["hand_camera"]["extrinsic_cv"]
+
+        Hf = Wf = image_fmap.size(2)
+        depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
+        
+        fx = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][0][0]
+        fy = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][0][1]
+        cx = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][0][2]
+        cy = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][1][2]
+
+        q_xyz, _ = get_3d_coordinates(
+            depth_s,
+            pose,
+            fx=fx,
+            fy=fy,
+            cx=cx,
+            cy=cy,
+            original_size=(224, 224),
+        )  # B, H, W, 3
+
+        q_xyz = q_xyz.permute(0, 2, 3, 1).reshape(B, -1, 3)            # (B, N, 3)
+        q_feat = image_fmap.permute(0, 2, 3, 1).reshape(B, -1, self.embed_dim)     # (B, N, C)
+
+        fused = self.local_fusion(q_xyz, q_feat, kv_xyz, kv_feat, pad_mask)  # (B, N, C)
+        image_fmap = fused.permute(0, 2, 1).reshape(
+            B, self.embed_dim, Hf, Wf
+        )  # (B, C, Hf, Wf)
+
+        return image_fmap
 
     def forward(self, observations, env_target_obj_idx=None, map_features=None) -> torch.Tensor:
-        encoded_tensor_list = []
-        # self.extractors contain nn.Modules that do all the processing.
-        for key, extractor in self.extractors.items():
-            obs = observations[key]
-            if key == "rgb":
-                obs = obs.float().permute(0,3,1,2)
-                obs = obs / 255.0
-            encoded_tensor_list.append(extractor(obs))
-        
-        if self.task_embedding is not None:
-            assert env_target_obj_idx is not None, "env_target_obj_idx must be provided for task embedding"
-            task_emb = self.task_embedding(env_target_obj_idx)
-            encoded_tensor_list.append(task_emb)
+        # 1. Process RGB features
+        obs = observations["rgb"]
+        obs = obs.float().permute(0,3,1,2) / 255.0
+        image_fmap = self.cnn_part(obs)
 
+        # 2. Process Map features and fuse with RGB if enabled
+        map_vec = None
         if self.use_map:
             if self.start_condition_map:
                 assert map_features is not None, "map_features must be provided when use_map=True and start_condition_map=True"
@@ -255,6 +306,9 @@ class NatureCNN(nn.Module):
                     dec_cat = self._decoder(torch.cat(raw_batch, dim=0))
                 
                 dec_split = dec_cat.split([c.size(0) for c in coords_batch], dim=0)
+
+                if self.use_local_fusion:
+                    image_fmap = self._local_fusion(observations, image_fmap, coords_batch, dec_split)
                 
                 lengths = [c.size(0) for c in coords_batch]
                 pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)
@@ -265,7 +319,6 @@ class NatureCNN(nn.Module):
                         torch.tensor(lengths, device=pad_3d.device)[:, None]
                 
                 map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
-                encoded_tensor_list.append(self.map_gate * map_vec)
             else:
                 # Get feature size from the map encoder's last layer
                 map_feature_size = self.map_encoder.net[-1].out_features
@@ -273,15 +326,139 @@ class NatureCNN(nn.Module):
                 some_obs_tensor = next(iter(observations.values()))
                 batch_size = some_obs_tensor.shape[0]
                 device = some_obs_tensor.device
-                zero_map_vec = torch.zeros(batch_size, map_feature_size, device=device)
-                encoded_tensor_list.append(zero_map_vec)
+                map_vec = torch.zeros(batch_size, map_feature_size, device=device)
+
+        # 3. Build the final feature list in the correct order
+        flattened_fmap = self.flatten_part(image_fmap)
+        rgb_features = self.fc_part(flattened_fmap)
+        encoded_tensor_list = [rgb_features]
+
+        if self.state_extractor is not None:
+            encoded_tensor_list.append(self.state_extractor(observations["state"]))
+        
+        if self.task_embedding is not None:
+            assert env_target_obj_idx is not None, "env_target_obj_idx must be provided for task embedding"
+            task_emb = self.task_embedding(env_target_obj_idx)
+            encoded_tensor_list.append(task_emb)
+
+        if map_vec is not None:
+            encoded_tensor_list.append(self.map_gate * map_vec)
 
         return torch.cat(encoded_tensor_list, dim=1)
 
-class Agent(nn.Module):
-    def __init__(self, envs, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False):
+
+
+class ZeroPos(nn.Module):
+    def __init__(self, out_dim: int):
         super().__init__()
-        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map)
+        self.out_dim = out_dim
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x.new_zeros(x.size(0), self.out_dim)
+
+class LocalFeatureFusion(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        num_layers: int = 1,
+        ff_mult: int = 4,
+        radius: float = 0.12,
+        k: int = 1,
+        dropout: float = 0.1,
+        use_rel_pos: bool = False
+    ):
+        super().__init__()
+        self.radius, self.k = radius, k
+
+        self.convs = nn.ModuleList()
+        self.ffns = nn.ModuleList()
+        self.norm1s = nn.ModuleList()
+        self.norm2s = nn.ModuleList()
+
+        for _ in range(num_layers):
+            # PointTransformerConv for local feature aggregation.
+            # It will update q_feat based on nearby kv_feat.
+            pos_nn = (MLP([3, dim, dim], plain_last=False, batch_norm=False) if use_rel_pos else ZeroPos(dim))
+            attn_nn = MLP([dim, dim], plain_last=False, batch_norm=False) # Maps q - k + pos_emb
+
+            self.convs.append(
+                PointTransformerConv(
+                    in_channels=dim,
+                    out_channels=dim,
+                    pos_nn=pos_nn,
+                    attn_nn=attn_nn,
+                    add_self_loops=False  # This is a bipartite graph
+                )
+            )
+            self.norm1s.append(nn.LayerNorm(dim))
+
+            # Feed-forward network
+            self.ffns.append(
+                nn.Sequential(
+                    nn.Linear(dim, dim * ff_mult),
+                    nn.GELU(),
+                    nn.Dropout(dropout),
+                    nn.Linear(dim * ff_mult, dim),
+                    nn.Dropout(dropout)
+                )
+            )
+            self.norm2s.append(nn.LayerNorm(dim))
+
+
+    def forward(
+        self,
+        q_xyz:   torch.Tensor,                # (B, N, 3)
+        q_feat:  torch.Tensor,                # (B, N, C)
+        kv_xyz:  torch.Tensor,                # (B, L, 3)
+        kv_feat: torch.Tensor,                # (B, L, C)
+        kv_pad:  Optional[torch.Tensor] = None  # (B, L) bool
+    ) -> torch.Tensor:
+        B, N, C = q_feat.shape
+        L = kv_xyz.shape[1]
+
+        # 1. Convert dense tensors to PyG format (flat vectors + batch indices)
+        q_xyz_flat = q_xyz.reshape(-1, 3)
+        out = q_feat.reshape(-1, C)
+        q_batch = torch.arange(B, device=q_xyz.device).repeat_interleave(N)
+
+        if kv_pad is not None:
+            kv_mask = ~kv_pad
+            kv_xyz_flat = kv_xyz[kv_mask]
+            kv_feat_flat = kv_feat[kv_mask]
+            kv_batch_full = torch.arange(B, device=kv_xyz.device).unsqueeze(1).expand(B, L)
+            kv_batch = kv_batch_full[kv_mask]
+        else:
+            kv_xyz_flat = kv_xyz.reshape(-1, 3)
+            kv_feat_flat = kv_feat.reshape(-1, C)
+            kv_batch = torch.arange(B, device=kv_xyz.device).repeat_interleave(L)
+
+        # 2. Find neighbors from kv for each q point
+        target_idx, source_idx = radius(x=kv_xyz_flat, y=q_xyz_flat, r=self.radius,
+                          batch_x=kv_batch, batch_y=q_batch, max_num_neighbors=self.k)
+
+        edge_index = torch.stack([source_idx, target_idx], dim=0)
+
+        # 3. Apply layers of PointTransformerConv for bipartite cross-attention
+        for i in range(len(self.convs)):
+            updated_q_feat = self.convs[i](
+                x=(kv_feat_flat, out),
+                pos=(kv_xyz_flat, q_xyz_flat),
+                edge_index=edge_index
+            )
+
+            # Residual connection, FFN, and normalization
+            out = self.norm1s[i](out + updated_q_feat)
+            out2 = self.ffns[i](out)
+            out = self.norm2s[i](out + out2)
+
+        # 5. Convert back to dense tensor (B, N, C)
+        final_feat, _ = to_dense_batch(out, q_batch, batch_size=B, max_num_nodes=N)
+
+        return final_feat
+
+class Agent(nn.Module):
+    def __init__(self, envs, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False):
+        super().__init__()
+        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map, use_local_fusion=use_local_fusion)
         # latent_size = np.array(envs.unwrapped.single_observation_space.shape).prod()
         latent_size = self.feature_net.out_features
         self.critic = nn.Sequential(

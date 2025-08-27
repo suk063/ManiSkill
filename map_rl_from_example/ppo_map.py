@@ -103,6 +103,8 @@ class Args:
     """if toggled, use the pre-trained environment map features as part of the observation"""
     start_condition_map: bool = False
     """If toggled, the map conditioning gate becomes learnable."""
+    use_local_fusion: bool = False
+    """If toggled, use local feature fusion."""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
     map_dir: str = "mapping/multi_env_maps_custom"
@@ -212,15 +214,15 @@ if __name__ == "__main__":
                     p.requires_grad = False
 
     # env setup
-    env_kwargs = dict(obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda")
+    env_kwargs = dict(obs_mode="rgb+depth", render_mode=args.render_mode, sim_backend="physx_cuda")
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
     envs = gym.make(args.env_id, num_envs=args.num_envs if not args.evaluate else 1, reconfiguration_freq=args.reconfiguration_freq, **env_kwargs)
 
     # rgbd obs mode returns a dict of data, we flatten it so there is just a rgbd key and state key
-    envs = FlattenRGBDObservationWrapper(envs, rgb=True, depth=False, state=args.include_state)
-    eval_envs = FlattenRGBDObservationWrapper(eval_envs, rgb=True, depth=False, state=args.include_state)
+    envs = FlattenRGBDObservationWrapper(envs, rgb=True, depth=True, state=args.include_state, include_camera_params=True)
+    eval_envs = FlattenRGBDObservationWrapper(eval_envs, rgb=True, depth=True, state=args.include_state, include_camera_params=True)
 
     if isinstance(envs.action_space, gym.spaces.Dict):
         envs = FlattenActionSpaceWrapper(envs)
@@ -307,7 +309,7 @@ if __name__ == "__main__":
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
     print(f"args.minibatch_size={args.minibatch_size} args.batch_size={args.batch_size} args.update_epochs={args.update_epochs}")
     print(f"####")
-    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map).to(device)
+    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map, use_local_fusion=args.use_local_fusion).to(device)
     
     params_to_update = agent.parameters()
     if args.vision_encoder == "dino":
