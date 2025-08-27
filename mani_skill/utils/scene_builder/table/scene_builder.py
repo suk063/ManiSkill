@@ -116,7 +116,7 @@ class TableSceneBuilder(SceneBuilder):
             "cyan":    [0.09019607843137255, 0.7450980392156863, 0.8117647058823529, 1],
             "white":   [1.0, 1.0, 1.0, 1],
         }
-        self.basket_model_path = str(PACKAGE_ASSET_DIR / "custom/plastic_crate.obj")
+        self.basket_model_path = str(PACKAGE_ASSET_DIR / "custom/plastic_crate_reduced.obj")
 
         basket_builder = self.scene.create_actor_builder()
         basket_mat = sapien.render.RenderMaterial()
@@ -140,7 +140,7 @@ class TableSceneBuilder(SceneBuilder):
             self.basket_model_path,
             scale=[0.002, 0.003, 0.002135],
             material=basket_mat,
-        ) # now size is 0.24 * 0.24 * 0.132
+        ) # now size is 0.24 * 0.24 * 0.8081
         
         basket_builder.add_nonconvex_collision_from_file(
             filename=self.basket_model_path,
