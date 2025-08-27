@@ -16,5 +16,5 @@ python map_rl_from_example/ppo_map.py \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
-    --checkpoint "save_checkpoint/image_2_stage.pt"
+    # --checkpoint "save_checkpoint/image_2_stage.pt"
     # --start_condition_map
