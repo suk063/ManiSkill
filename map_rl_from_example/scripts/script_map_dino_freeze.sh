@@ -5,17 +5,16 @@ python map_rl_from_example/ppo_map.py \
     --num_envs=100 \
     --num_eval_envs=20 \
     --eval_freq=20 \
-    --total_timesteps=30_000_000 \
+    --total_timesteps=30_000_000 \
     --num_steps=200 \
     --num_eval_steps=200 \
     --gamma=0.9 \
     --ent_coef=1e-3 \
     --learning_rate=3e-4 \
     --vision_encoder=dino \
-    --freeze_dino_backbone \
     --capture-video \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
-    # --checkpoint "runs/YCB_sequential_xarm6_ppo_map_dino_freeze/ckpt_301.pt"
+    --checkpoint "save_checkpoint/image_2_stage.pt"
     # --start_condition_map
