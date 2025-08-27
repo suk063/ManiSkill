@@ -259,7 +259,7 @@ class NatureCNN(nn.Module):
         depth_s = F.interpolate(depth, size=(Hf, Wf), mode="nearest-exact")
         
         fx = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][0][0]
-        fy = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][0][1]
+        fy = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][1][1]
         cx = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][0][2]
         cy = observations["sensor_param"]["hand_camera"]["intrinsic_cv"][0][1][2]
 
