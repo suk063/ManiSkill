@@ -1,0 +1,20 @@
+python map_rl_from_example/ppo_map.py \
+    --env_id=PickYCBSequential-v1 \
+    --control_mode=pd_joint_vel \
+    --exp_name=YCB_sequential_xarm6_ppo_map_dino_fusion_cond \
+    --num_envs=50 \
+    --num_eval_envs=20 \
+    --eval_freq=20 \
+    --total_timesteps=50_000_000 \
+    --num_steps=200 \
+    --num_eval_steps=200 \
+    --gamma=0.9 \
+    --ent_coef=1e-3 \
+    --learning_rate=3e-4 \
+    --vision_encoder=dino \
+    --capture-video \
+    --track \
+    --wandb_project_name "PPO-RL-Map" \
+    --use_map \
+    --use_local_fusion \
+    --checkpoint "save_checkpoint/2_object_cam_not_aligned_image.pt"
