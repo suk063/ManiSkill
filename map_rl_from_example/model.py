@@ -292,8 +292,8 @@ class NatureCNN(nn.Module):
         # 2. Process Map features and fuse with RGB if enabled
         map_vec = None
         if self.use_map:
-            if self.start_condition_map:
-                assert map_features is not None, "map_features must be provided when use_map=True and start_condition_map=True"
+            if self.use_local_fusion or self.start_condition_map:
+                assert map_features is not None, "map_features must be provided when use_map=True and (start_condition_map=True or use_local_fusion=True)"
                 
                 coords_batch, raw_batch = [], []
                 for g in map_features:
@@ -310,16 +310,18 @@ class NatureCNN(nn.Module):
                 if self.use_local_fusion:
                     image_fmap = self._local_fusion(observations, image_fmap, coords_batch, dec_split)
                 
-                lengths = [c.size(0) for c in coords_batch]
-                pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)
-                coords_padded = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)
-                Lmax = pad_3d.size(1)
+                if self.start_condition_map:
+                    lengths = [c.size(0) for c in coords_batch]
+                    pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)
+                    coords_padded = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)
+                    Lmax = pad_3d.size(1)
 
-                pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
-                        torch.tensor(lengths, device=pad_3d.device)[:, None]
-                
-                map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
-            else:
+                    pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
+                            torch.tensor(lengths, device=pad_3d.device)[:, None]
+                    
+                    map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
+
+            if map_vec is None:
                 # Get feature size from the map encoder's last layer
                 map_feature_size = self.map_encoder.net[-1].out_features
                 # Get batch size from any observation tensor

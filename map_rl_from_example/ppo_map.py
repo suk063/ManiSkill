@@ -194,7 +194,7 @@ if __name__ == "__main__":
             print(f"[ERROR] Decoder file not found at {args.decoder_path}. Exiting.")
             exit()
 
-        if args.start_condition_map:
+        if args.start_condition_map or args.use_local_fusion:
             all_grids = []
             if not os.path.exists(args.map_dir):
                 print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     # Create samplers for train/eval subsets of global envs and do initial resets with global_idx
     batch_train_envs = args.num_envs if not args.evaluate else 1
     
-    if args.use_map and args.start_condition_map:
+    if args.use_map and (args.start_condition_map or args.use_local_fusion):
         grid_sampler = GridSampler(all_grids, batch_train_envs, seed=args.seed)
     else:
         # Create a placeholder list to satisfy GridSampler API; we only need indices
@@ -286,7 +286,7 @@ if __name__ == "__main__":
     active_indices, grids = grid_sampler.sample()
     
     eval_grids = None
-    if args.use_map and args.start_condition_map:
+    if args.use_map and (args.start_condition_map or args.use_local_fusion):
         eval_grids = [all_grids[i] for i in eval_indices]
 
 
@@ -519,7 +519,7 @@ if __name__ == "__main__":
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                mb_grids = [grids[i % args.num_envs] for i in mb_inds] if args.use_map and args.start_condition_map else None
+                mb_grids = [grids[i % args.num_envs] for i in mb_inds] if args.use_map and (args.start_condition_map or args.use_local_fusion) else None
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(
                     b_obs[mb_inds],
                     env_target_obj_idx=b_env_target_obj_idxs[mb_inds],

@@ -1,8 +1,8 @@
 python map_rl_from_example/ppo_map.py \
     --env_id=PickYCBSequential-v1 \
     --control_mode=pd_joint_vel \
-    --exp_name=YCB_sequential_xarm6_ppo_map_dino_freeze \
-    --num_envs=100 \
+    --exp_name=YCB_sequential_xarm6_ppo_map_dino_cond \
+    --num_envs=50 \
     --num_eval_envs=20 \
     --eval_freq=20 \
     --total_timesteps=50_000_000 \
@@ -16,5 +16,5 @@ python map_rl_from_example/ppo_map.py \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
-    # --checkpoint "save_checkpoint/image_2_stage.pt"
-    # --start_condition_map
+    --start_condition_map \
+    --checkpoint "save_checkpoint/2_object_cam_not_aligned_image.pt"
