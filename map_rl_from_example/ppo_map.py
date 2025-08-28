@@ -145,6 +145,8 @@ class Args:
     save_train_video_freq: Optional[int] = None
     """frequency to save training videos in terms of iterations"""
     finite_horizon_gae: bool = False
+    load_actor_logstd: bool = False
+    """if toggled, actor_logstd weights will be loaded from the checkpoint"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -326,6 +328,12 @@ if __name__ == "__main__":
     if args.checkpoint:
         print(f"Loading checkpoint from {args.checkpoint}")
         checkpoint_state_dict = torch.load(args.checkpoint, map_location=device)
+
+        if not args.load_actor_logstd:
+            if 'actor_logstd' in checkpoint_state_dict:
+                del checkpoint_state_dict['actor_logstd']
+                print("--- Excluded 'actor_logstd' from checkpoint loading ---")
+
         model_state_dict = agent.state_dict()
         
         # Filter out parameters with size mismatches
