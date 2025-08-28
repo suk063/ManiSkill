@@ -139,7 +139,7 @@ class PointNet(nn.Module):
 
 
 class NatureCNN(nn.Module):
-    def __init__(self, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False):
+    def __init__(self, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False, use_rel_pos_in_fusion: bool = True):
         super().__init__()
         self.vision_encoder_name = vision_encoder
         self.vision_encoder = None
@@ -229,7 +229,7 @@ class NatureCNN(nn.Module):
             
             if self.use_local_fusion:
                 self.map_feature_proj = nn.Linear(map_raw_dim, self.embed_dim)
-                self.local_fusion = LocalFeatureFusion(dim=self.embed_dim, k=1, radius=0.12, num_layers=1, use_rel_pos=True)
+                self.local_fusion = LocalFeatureFusion(dim=self.embed_dim, k=1, radius=0.12, num_layers=1, use_rel_pos=use_rel_pos_in_fusion)
 
 
     def _local_fusion(
@@ -405,6 +405,8 @@ class LocalFeatureFusion(nn.Module):
             )
             self.norm2s.append(nn.LayerNorm(dim))
 
+        self.fusion_gate = nn.Parameter(torch.tensor(0.0))
+
 
     def forward(
         self,
@@ -448,7 +450,7 @@ class LocalFeatureFusion(nn.Module):
             )
 
             # Residual connection, FFN, and normalization
-            out = self.norm1s[i](out + updated_q_feat)
+            out = self.norm1s[i](out + self.fusion_gate * updated_q_feat)
             out2 = self.ffns[i](out)
             out = self.norm2s[i](out + out2)
 
@@ -458,9 +460,9 @@ class LocalFeatureFusion(nn.Module):
         return final_feat
 
 class Agent(nn.Module):
-    def __init__(self, envs, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False):
+    def __init__(self, envs, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False, use_rel_pos_in_fusion: bool = True):
         super().__init__()
-        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map, use_local_fusion=use_local_fusion)
+        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map, use_local_fusion=use_local_fusion, use_rel_pos_in_fusion=use_rel_pos_in_fusion)
         # latent_size = np.array(envs.unwrapped.single_observation_space.shape).prod()
         latent_size = self.feature_net.out_features
         self.critic = nn.Sequential(

@@ -105,6 +105,8 @@ class Args:
     """If toggled, the map conditioning gate becomes learnable."""
     use_local_fusion: bool = False
     """If toggled, use local feature fusion."""
+    use_rel_pos_in_fusion: bool = False
+    """If toggled, use relative positional encoding in local feature fusion."""
     vision_encoder: str = "dino" # "plain_cnn" or "dino"
     """the vision encoder to use for the agent"""
     map_dir: str = "mapping/multi_env_maps_custom"
@@ -312,7 +314,7 @@ if __name__ == "__main__":
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
     print(f"args.minibatch_size={args.minibatch_size} args.batch_size={args.batch_size} args.update_epochs={args.update_epochs}")
     print(f"####")
-    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map, use_local_fusion=args.use_local_fusion).to(device)
+    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map, use_local_fusion=args.use_local_fusion, use_rel_pos_in_fusion=args.use_rel_pos_in_fusion).to(device)
     
     params_to_update = agent.parameters()
     if args.vision_encoder == "dino":
