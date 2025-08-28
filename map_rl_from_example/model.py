@@ -229,7 +229,7 @@ class NatureCNN(nn.Module):
             
             if self.use_local_fusion:
                 self.map_feature_proj = nn.Linear(map_raw_dim, self.embed_dim)
-                self.local_fusion = LocalFeatureFusion(dim=self.embed_dim, k=1, radius=0.12, num_layers=1, use_rel_pos=False)
+                self.local_fusion = LocalFeatureFusion(dim=self.embed_dim, k=1, radius=0.12, num_layers=1, use_rel_pos=True)
 
 
     def _local_fusion(
