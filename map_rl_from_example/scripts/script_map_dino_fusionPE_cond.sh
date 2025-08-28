@@ -1,7 +1,7 @@
 python map_rl_from_example/ppo_map.py \
     --env_id=PickYCBSequential-v1 \
     --control_mode=pd_joint_vel \
-    --exp_name=YCB_sequential_xarm6_ppo_map_dino_fusion \
+    --exp_name=YCB_sequential_xarm6_ppo_map_dino_fusionPE_cond \
     --num_envs=50 \
     --num_eval_envs=20 \
     --eval_freq=20 \
@@ -17,4 +17,5 @@ python map_rl_from_example/ppo_map.py \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
     --use_local_fusion \
+    --use_rel_pos_in_fusion \
     --checkpoint "save_checkpoint/2_object_cam_not_aligned_image.pt"
