@@ -223,7 +223,7 @@ class NatureCNN(nn.Module):
             map_raw_dim = 768  # output dim of *decoder*
             self.map_encoder = PointNet(map_raw_dim, feature_size)
             self.out_features += feature_size
-            self.map_gate = nn.Parameter(torch.tensor(0.0))
+            self.map_gate = nn.Parameter(torch.zeros(feature_size))
             if not self.start_condition_map:
                 self.map_gate.requires_grad = False
             
@@ -405,7 +405,7 @@ class LocalFeatureFusion(nn.Module):
             )
             self.norm2s.append(nn.LayerNorm(dim))
 
-        self.fusion_gate = nn.Parameter(torch.tensor(0.0))
+        self.fusion_gate = nn.Parameter(torch.zeros(dim))
 
 
     def forward(
