@@ -596,6 +596,8 @@ if __name__ == "__main__":
         logger.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         logger.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         logger.add_scalar("losses/explained_variance", explained_var, global_step)
+        if args.use_map and args.start_condition_map:
+            logger.add_scalar("charts/map_gate_norm", agent.feature_net.map_gate.norm().item(), global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         logger.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         logger.add_scalar("time/step", global_step, global_step)
