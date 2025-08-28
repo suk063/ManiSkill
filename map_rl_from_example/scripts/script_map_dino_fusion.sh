@@ -16,4 +16,5 @@ python map_rl_from_example/ppo_map.py \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
-    --use_local_fusion
+    --use_local_fusion \
+    --checkpoint "save_checkpoint/2_object_cam_not_aligned_image.pt"
