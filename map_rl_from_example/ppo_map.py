@@ -92,8 +92,10 @@ class Args:
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
-    total_envs: int = 100
+    total_envs: int = 150
     """Total number of discrete environments available for sampling with global_idx"""
+    sampling_envs: Optional[int] = 100
+    """Number of environments to sample from for training. If None, defaults to total_envs."""
     # task specification
     model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "017_orange", "012_strawberry", "011_banana"])
     """the list of model ids to use for the environment"""
@@ -165,6 +167,8 @@ if __name__ == "__main__":
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
     args.num_tasks = len(args.model_ids)
+    if args.sampling_envs is None:
+        args.sampling_envs = args.total_envs
     if args.exp_name is None:
         args.exp_name = os.path.basename(__file__)[: -len(".py")]
         run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -204,8 +208,8 @@ if __name__ == "__main__":
                 print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
                 exit()
 
-            print(f"Loading {args.total_envs} maps from {args.map_dir} ...")
-            for i in range(args.total_envs):
+            print(f"Loading {args.sampling_envs} maps from {args.map_dir} ...")
+            for i in range(args.sampling_envs):
                 grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.sparse.pt")
                 if not os.path.exists(grid_path):
                     print(f"[ERROR] Map file not found: {grid_path}. Exiting.")
@@ -282,11 +286,11 @@ if __name__ == "__main__":
         grid_sampler = GridSampler(all_grids, batch_train_envs, seed=args.seed)
     else:
         # Create a placeholder list to satisfy GridSampler API; we only need indices
-        dummy_list = list(range(args.total_envs))
+        dummy_list = list(range(args.sampling_envs))
         grid_sampler = GridSampler(dummy_list, batch_train_envs, seed=args.seed)
 
     rng_eval = np.random.RandomState(args.seed + 123)
-    eval_indices = rng_eval.choice(args.total_envs, args.num_eval_envs, replace=False)
+    eval_indices = rng_eval.choice(args.sampling_envs, args.num_eval_envs, replace=False)
     active_indices, grids = grid_sampler.sample()
     
     eval_grids = None
