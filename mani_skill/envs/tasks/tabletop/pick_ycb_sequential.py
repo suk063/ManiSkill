@@ -50,8 +50,8 @@ class PickYCBSequentialEnv(BaseEnv):
         self.spawn_z_clearance = 0.001
 
         self.robot_cumulative_force_limit = 500
-        self.robot_force_mult = 0.005
-        self.robot_force_penalty_min = 0.1 
+        self.robot_force_mult = 0.001
+        self.robot_force_penalty_min = 0.2
         
         # These are for clutter environment where all the objects will appear in all parallel environment
         

@@ -3,9 +3,9 @@ python map_rl_from_example/ppo_map.py \
     --control_mode=pd_joint_vel \
     --exp_name=YCB_sequential_xarm6_ppo_map_dino_cond \
     --num_envs=100 \
-    --num_eval_envs=20 \
+    --num_eval_envs=12 \
     --eval_freq=20 \
-    --total_timesteps=50_000_000 \
+    --total_timesteps=30_000_000 \
     --num_steps=200 \
     --num_eval_steps=200 \
     --gamma=0.9 \
