@@ -619,8 +619,8 @@ class PickYCBSequentialEnv(BaseEnv):
         robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), dim=1)
         robot_static_reward = 1.0 - torch.tanh(5.0 * robot_qvel)
 
-        tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - basket_top_target, dim=1)
-        reach_basket_top_reward = 1.0 - torch.tanh(5.0 * tcp_to_basket_top_dist)
+        # tcp_to_basket_top_dist = torch.linalg.norm(self.agent.tcp.pose.p - basket_top_target, dim=1)
+        # reach_basket_top_reward = 1.0 - torch.tanh(5.0 * tcp_to_basket_top_dist)
 
         final_state = (
             mask_prog1
@@ -645,13 +645,13 @@ class PickYCBSequentialEnv(BaseEnv):
     
         # Add rewards for collision avoidance.
         # 1. Reward for low instantaneous force.
-        step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
+        step_no_col_rew = 2 * (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
                                                                 min=self.robot_force_penalty_min) - self.robot_force_penalty_min)))
         reward += step_no_col_rew
 
         # 2. Reward for staying under cumulative force limit.
-        cum_col_under_thresh_rew = (info["robot_cumulative_force"] < self.robot_cumulative_force_limit).float()
-        reward += cum_col_under_thresh_rew
+        # cum_col_under_thresh_rew = (info["robot_cumulative_force"] < self.robot_cumulative_force_limit).float()
+        # reward += cum_col_under_thresh_rew
         
         return reward
 
