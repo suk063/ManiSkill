@@ -40,6 +40,7 @@ class PickYCBSequentialEnv(BaseEnv):
     basket_pos_offset = torch.tensor([0, 0, 0.08081])
 
     def __init__(self, *args, robot_uids="xarm6_robotiq", robot_init_qpos_noise=0.1, camera_uids: Union[str, List[str]]="hand_camera", **kwargs):
+        self.is_eval = kwargs.pop("is_eval", False)
         self.robot_init_qpos_noise = robot_init_qpos_noise
         if isinstance(camera_uids, str):
             camera_uids = [camera_uids]
@@ -49,8 +50,8 @@ class PickYCBSequentialEnv(BaseEnv):
         self.spawn_z_clearance = 0.001
 
         self.robot_cumulative_force_limit = 500
-        self.robot_force_mult = 0.001
-        self.robot_force_penalty_min = 0.2 
+        self.robot_force_mult = 0.005
+        self.robot_force_penalty_min = 0.1 
         
         # These are for clutter environment where all the objects will appear in all parallel environment
         
@@ -316,7 +317,28 @@ class PickYCBSequentialEnv(BaseEnv):
         # For the environments being reset, generate a new random permutation of target objects.
         # The first two elements of the permutation will be the targets for this episode.
         num_targets = len(self.target_model_ids)
-        perms = torch.stack([torch.randperm(num_targets, device=self.device) for _ in range(len(env_idx))])
+
+        if self.is_eval:
+            # For evaluation, generate deterministic permutations based on global_idx
+            if options is not None and "global_idx" in options:
+                gidx = options["global_idx"]
+                if isinstance(gidx, torch.Tensor):
+                    gidx = gidx.to(env_idx.device)
+                else:
+                    gidx = torch.as_tensor(gidx, device=env_idx.device)
+                assert len(gidx) == len(env_idx), "global_idx length mismatch"
+                eff_idx = gidx.long()
+            else:
+                # Fallback for evaluation if global_idx is not provided
+                eff_idx = env_idx.long()
+            
+            # Use a different seed from _initialize_ycb_objects to ensure different permutations
+            rngs = [torch.Generator(device=self.device).manual_seed(int(i) + 42) for i in eff_idx]
+            perms = torch.stack([torch.randperm(num_targets, generator=g, device=self.device) for g in rngs])
+        else:
+            # For training, use random permutations
+            perms = torch.stack([torch.randperm(num_targets, device=self.device) for _ in range(len(env_idx))])
+        
         self.env_pick_order[env_idx] = perms
 
         # Update all tracking tensors based on the new order FOR ALL ENVS

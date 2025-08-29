@@ -228,7 +228,10 @@ if __name__ == "__main__":
         env_kwargs = dict(obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda")
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
-    eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **env_kwargs)
+    
+    eval_env_kwargs = env_kwargs.copy()
+    eval_env_kwargs["is_eval"] = True
+    eval_envs = gym.make(args.env_id, num_envs=args.num_eval_envs, reconfiguration_freq=args.eval_reconfiguration_freq, **eval_env_kwargs)
     envs = gym.make(args.env_id, num_envs=args.num_envs if not args.evaluate else 1, reconfiguration_freq=args.reconfiguration_freq, **env_kwargs)
 
     # rgbd obs mode returns a dict of data, we flatten it so there is just a rgbd key and state key
