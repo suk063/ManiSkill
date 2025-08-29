@@ -79,7 +79,7 @@ class PickYCBSequentialEnv(BaseEnv):
         
         # Define target objects
         self.target_model_ids = ["013_apple", "014_lemon", "017_orange"]
-        target_model_xy = [[0.02, -0.14], [0.02, 0.14], [0.02, 0.0]]
+        target_model_xy = [[0.03, -0.15], [0.03, 0.15], [0.03, 0.0]]
         self.target_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
@@ -258,7 +258,7 @@ class PickYCBSequentialEnv(BaseEnv):
         # 2. XY-OFFSET
         # Generate deterministic xy-offsets with different ranges
         max_offsets = torch.zeros(num_models, 1, device=self.device)
-        max_offsets[:num_targets] = 0.04
+        max_offsets[:num_targets] = 0.05
         max_offsets[num_targets:] = 0.01 
 
         xy_offsets = torch.stack([
