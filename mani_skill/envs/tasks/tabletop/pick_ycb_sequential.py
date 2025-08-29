@@ -48,7 +48,7 @@ class PickYCBSequentialEnv(BaseEnv):
 
         self.spawn_z_clearance = 0.001
 
-        self.robot_cumulative_force_limit = 5000
+        self.robot_cumulative_force_limit = 500
         self.robot_force_mult = 0.001
         self.robot_force_penalty_min = 0.2 
         
@@ -155,6 +155,10 @@ class PickYCBSequentialEnv(BaseEnv):
             "right_inner_finger",
             "left_inner_finger_pad",
             "right_inner_finger_pad",
+            "left_inner_knuckle",
+            "right_inner_knuckle",
+            "left_outer_knuckle",
+            "right_outer_knuckle",
         ]
         self.force_articulation_link_names = [
             link.name

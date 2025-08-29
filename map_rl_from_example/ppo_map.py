@@ -382,6 +382,8 @@ if __name__ == "__main__":
                         num_episodes += mask.sum()
                         for k, v in eval_infos["final_info"]["episode"].items():
                             eval_metrics[k].append(v)
+                        if "robot_cumulative_force" in eval_infos["final_info"]:
+                            eval_metrics["robot_cumulative_force"].append(eval_infos["final_info"]["robot_cumulative_force"][mask])
             print(f"Evaluated {args.num_eval_steps * args.num_eval_envs} steps resulting in {num_episodes} episodes")
             for k, v in eval_metrics.items():
                 mean = torch.stack(v).float().mean()
@@ -436,6 +438,8 @@ if __name__ == "__main__":
                 done_mask = infos["_final_info"]
                 for k, v in final_info["episode"].items():
                     logger.add_scalar(f"train/{k}", v[done_mask].float().mean(), global_step)
+                if "robot_cumulative_force" in final_info:
+                    logger.add_scalar("train/robot_cumulative_force", final_info["robot_cumulative_force"][done_mask].float().mean(), global_step)
 
                 final_obs = infos["final_observation"]
                 def _slice(o):
