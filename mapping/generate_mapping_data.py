@@ -199,6 +199,14 @@ if pts_all[0]:
     points = np.asarray(pcd_downsampled.points)
     colors = np.asarray(pcd_downsampled.colors)
     
+    # Filter points to visualize only those within the specified boundary
+    scene_min = np.array([-0.8, -1.0, -0.1])
+    scene_max = np.array([0.4,  1.0,  0.3])
+    mask = np.all((points >= scene_min) & (points <= scene_max), axis=1)
+    points = points[mask]
+    colors = colors[mask]
+    print(f"Filtered to {len(points)} points for visualization within the boundary.")
+    
     fig = go.Figure(data=[go.Scatter3d(
         x=points[:, 0], y=points[:, 1], z=points[:, 2],
         mode='markers',
@@ -208,6 +216,7 @@ if pts_all[0]:
             opacity=0.8
         )
     )])
+
     
     # Set aspect ratio and labels
     x_range = [points[:, 0].min(), points[:, 0].max()]

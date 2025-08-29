@@ -95,7 +95,7 @@ class Args:
     total_envs: int = 100
     """Total number of discrete environments available for sampling with global_idx"""
     # task specification
-    model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "011_banana", "012_strawberry", "017_orange"])
+    model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "017_orange", "012_strawberry", "011_banana"])
     """the list of model ids to use for the environment"""
     
     # Map-related arguments

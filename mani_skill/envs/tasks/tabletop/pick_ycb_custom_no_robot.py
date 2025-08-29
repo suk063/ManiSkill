@@ -31,11 +31,11 @@ class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
     def _default_human_render_camera_configs(self):
         moving_camera = CameraConfig(
             "moving_camera", pose=sapien.Pose(), width=224, height=224,
-            fov=np.pi / 3, near=0.01, far=100, mount=self.cam_mount
+            fov=np.deg2rad(57), near=0.01, far=100, mount=self.cam_mount
         )
         fixed_cam_pose = sapien_utils.look_at(eye=[0.508, -0.5, 0.42], target=[-0.522, 0.2, 0])
         return [
-            CameraConfig("hand_cam", pose=fixed_cam_pose, width=224, height=224, fov=np.pi / 3, near=0.01, far=100),
+            CameraConfig("hand_cam", pose=fixed_cam_pose, width=224, height=224, fov=np.deg2rad(57), near=0.01, far=100),
             moving_camera
         ]
 
@@ -52,8 +52,15 @@ class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
         
         z_margin = 0.01
 
-        pos_obj_1 = self.pick_obj_1.pose.p
-        pos_obj_2 = self.pick_obj_2.pose.p
+        b_idx = torch.arange(self.num_envs, device=self.device)
+        first_pick_indices = self.env_pick_order[:, 0]
+        second_pick_indices = self.env_pick_order[:, 1]
+
+        # Get poses of all target objects and select the ones for the current episode
+        all_target_pos = torch.stack([actor.pose.p for actor in self.target_actors], dim=1)
+        pos_obj_1 = all_target_pos[b_idx, first_pick_indices]
+        pos_obj_2 = all_target_pos[b_idx, second_pick_indices]
+        
         pos_basket_bottom = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         
         # XY-plane check
@@ -82,8 +89,9 @@ class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
         is_grasped_obj_1 = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         is_grasped_obj_2 = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
-        is_static_obj_1 = self.pick_obj_1.is_static(lin_thresh=1e-2, ang_thresh=0.5)
-        is_static_obj_2 = self.pick_obj_2.is_static(lin_thresh=1e-2, ang_thresh=0.5)
+        all_is_static = torch.stack([actor.is_static(lin_thresh=1e-2, ang_thresh=0.5) for actor in self.target_actors], dim=1)
+        is_static_obj_1 = all_is_static[b_idx, first_pick_indices]
+        is_static_obj_2 = all_is_static[b_idx, second_pick_indices]
         is_robot_static = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
 
         success_1 = is_placed_in_basket_obj_1 & is_static_obj_1 & (~is_grasped_obj_1)
@@ -117,11 +125,23 @@ class PickYCBCustomNoRobotEnv(PickYCBSequentialEnv):
             basket_pos=self.basket.pose.p,
         )
         if "state" in self.obs_mode:
+            b_idx = torch.arange(self.num_envs, device=self.device)
+            first_pick_indices = self.env_pick_order[:, 0]
+            second_pick_indices = self.env_pick_order[:, 1]
+
+            all_target_pos = torch.stack([actor.pose.p for actor in self.target_actors], dim=1)
+            obj1_p = all_target_pos[b_idx, first_pick_indices]
+            obj2_p = all_target_pos[b_idx, second_pick_indices]
+            
+            all_target_raw_pose = torch.stack([actor.pose.raw_pose for actor in self.target_actors], dim=1)
+            obj1_raw_pose = all_target_raw_pose[b_idx, first_pick_indices]
+            obj2_raw_pose = all_target_raw_pose[b_idx, second_pick_indices]
+
             obs.update(
-                obj1_pose=self.pick_obj_1.pose.raw_pose,
-                obj2_pose=self.pick_obj_2.pose.raw_pose,
-                obj1_to_basket_pos=self.basket.pose.p - self.pick_obj_1.pose.p,
-                obj2_to_basket_pos=self.basket.pose.p - self.pick_obj_2.pose.p,
+                obj1_pose=obj1_raw_pose,
+                obj2_pose=obj2_raw_pose,
+                obj1_to_basket_pos=self.basket.pose.p - obj1_p,
+                obj2_to_basket_pos=self.basket.pose.p - obj2_p,
             )
         return obs
 
