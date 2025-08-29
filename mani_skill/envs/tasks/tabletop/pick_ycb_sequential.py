@@ -258,7 +258,7 @@ class PickYCBSequentialEnv(BaseEnv):
         # 2. XY-OFFSET
         # Generate deterministic xy-offsets with different ranges
         max_offsets = torch.zeros(num_models, 1, device=self.device)
-        max_offsets[:num_targets] = 0.05
+        max_offsets[:num_targets] = 0.04
         max_offsets[num_targets:] = 0.01 
 
         xy_offsets = torch.stack([
