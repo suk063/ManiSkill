@@ -92,7 +92,7 @@ class Args:
     """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
     control_mode: Optional[str] = "pd_joint_delta_pos"
     """the control mode to use for the environment"""
-    total_envs: int = 150
+    total_envs: int = 120
     """Total number of discrete environments available for sampling with global_idx"""
     sampling_envs: Optional[int] = 100
     """Number of environments to sample from for training. If None, defaults to total_envs."""
