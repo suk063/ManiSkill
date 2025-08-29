@@ -247,6 +247,12 @@
     <origin xyz="0.05 0 0" rpy="3.141592653589793 -0.0 1.5707963267948966"/>
   </joint>
 
+  <link name="ego_camera_link" />
+  <joint name="ego_camera_link_joint" type="fixed">
+    <parent link="link6"/>
+    <child link="ego_camera_link"/>
+    <origin rpy="3.141592653589793 0.0 0.0" xyz="0.0675 0.0115 -0.016315"/>
+  </joint>
 
   <joint name="gripper_fix" type="fixed">
     <parent link="link6"/>

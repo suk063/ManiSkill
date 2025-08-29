@@ -48,9 +48,9 @@ class PickYCBSequentialEnv(BaseEnv):
 
         self.spawn_z_clearance = 0.001
 
-        # self.robot_cumulative_force_limit = 5000
-        # self.robot_force_mult = 0.001
-        # self.robot_force_penalty_min = 0.2 
+        self.robot_cumulative_force_limit = 500
+        self.robot_force_mult = 0.001
+        self.robot_force_penalty_min = 0.2 
         
         # These are for clutter environment where all the objects will appear in all parallel environment
         
@@ -62,7 +62,7 @@ class PickYCBSequentialEnv(BaseEnv):
             "006_mustard_bottle": 0.1945 / 2.0,
             "007_tuna_fish_can": 0.013,
             "024_bowl": 0.028,
-            "025_mug": 0.04,
+            "025_mug": 0.041,
             "015_peach": 0.0296,
             "008_pudding_box": 0.015,
             "051_large_clamp": 0.019,
@@ -72,12 +72,14 @@ class PickYCBSequentialEnv(BaseEnv):
             "017_orange": 0.036,
             "012_strawberry": 0.021,
             "019_pitcher_base": 0.235 / 2.0,
-            "016_pear": 0.033
+            "016_pear": 0.033,
+            "040_large_marker": 0.009,
+            "018_plum": 0.026
         }
         
         # Define target objects
-        self.target_model_ids = ["013_apple", "014_lemon"]
-        target_model_xy = [[0.0, -0.1], [0.0, 0.1]]
+        self.target_model_ids = ["013_apple", "014_lemon", "017_orange"]
+        target_model_xy = [[0.02, -0.14], [0.02, 0.14], [0.02, 0.0]]
         self.target_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
@@ -85,15 +87,16 @@ class PickYCBSequentialEnv(BaseEnv):
 
         # Define clutter objects
         self.clutter_model_ids = [
-            "002_master_chef_can", "004_sugar_box", "006_mustard_bottle",
-            "007_tuna_fish_can", "024_bowl", "025_mug", "015_peach",
-            "008_pudding_box", "051_large_clamp", "011_banana",
-            "005_tomato_soup_can", "009_gelatin_box", "017_orange","012_strawberry", "019_pitcher_base", "016_pear",
+            "002_master_chef_can", "004_sugar_box", "006_mustard_bottle", "007_tuna_fish_can", 
+            "024_bowl", "025_mug", "015_peach", "008_pudding_box", 
+            "011_banana", "005_tomato_soup_can", "009_gelatin_box", "012_strawberry", 
+            "019_pitcher_base", "016_pear", "018_plum", "040_large_marker"
         ]
         clutter_model_xy = [
             [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
             [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
-            [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], [0.12, 0], [-0.15, -0.21], [-0.44, 0.6], [-0.49, -0.64]
+            [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], 
+            [0.12, 0.2], [-0.44, 0.6], [-0.49, -0.64], [-0.44, 0]
         ]
         self.clutter_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
@@ -113,20 +116,20 @@ class PickYCBSequentialEnv(BaseEnv):
             pose=sapien_utils.look_at(eye=self.sensor_cam_eye_pos, target=self.sensor_cam_target_pos), 
             width=224, 
             height=224, 
-            fov=np.pi / 3, 
+            fov=np.deg2rad(57), 
             near=0.01, 
             far=100,
         )
 
         hand_camera_config = CameraConfig(
             uid="hand_camera",
-            pose=sapien.Pose(p=[0, 0, -0.05], q=[0.70710678, 0, 0.70710678, 0]),
+            pose=sapien.Pose(p=[0, 0, 0], q=[0.70710678, 0, 0.70710678, 0]),
             width=224,
             height=224,
-            fov=np.pi / 3,
+            fov=np.deg2rad(57),
             near=0.01,
             far=100,
-            mount=self.agent.robot.links_map["camera_link"],
+            mount=self.agent.robot.links_map["ego_camera_link"],
         )
         
         sensor_configs = []
@@ -148,19 +151,23 @@ class PickYCBSequentialEnv(BaseEnv):
         super()._load_agent(options, initial_agent_poses, build_separate)
 
         # Ignore gripper finger pads for collision checking
-        # force_rew_ignore_links = [
-        #     "left_outer_finger",
-        #     "right_outer_finger",
-        #     "left_inner_finger",
-        #     "right_inner_finger",
-        #     "left_inner_finger_pad",
-        #     "right_inner_finger_pad",
-        # ]
-        # self.force_articulation_link_names = [
-        #     link.name
-        #     for link in self.agent.robot.get_links()
-        #     if link.name not in force_rew_ignore_links
-        # ]
+        force_rew_ignore_links = [
+            "left_outer_finger",
+            "right_outer_finger",
+            "left_inner_finger",
+            "right_inner_finger",
+            "left_inner_finger_pad",
+            "right_inner_finger_pad",
+            "left_inner_knuckle",
+            "right_inner_knuckle",
+            "left_outer_knuckle",
+            "right_outer_knuckle",
+        ]
+        self.force_articulation_link_names = [
+            link.name
+            for link in self.agent.robot.get_links()
+            if link.name not in force_rew_ignore_links
+        ]
 
     def _load_scene(self, options: dict):
         self.table_scene = TableSceneBuilder(
@@ -251,7 +258,7 @@ class PickYCBSequentialEnv(BaseEnv):
         # 2. XY-OFFSET
         # Generate deterministic xy-offsets with different ranges
         max_offsets = torch.zeros(num_models, 1, device=self.device)
-        max_offsets[:num_targets] = 0.05
+        max_offsets[:num_targets] = 0.04
         max_offsets[num_targets:] = 0.01 
 
         xy_offsets = torch.stack([
@@ -299,23 +306,32 @@ class PickYCBSequentialEnv(BaseEnv):
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         # Randomly assign the order of target objects to pick for each episode
         if not hasattr(self, "env_pick_order"):
-            self.env_pick_order = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+            # It will store permutations of target object indices
+            self.env_pick_order = torch.zeros(self.num_envs, len(self.target_model_ids), dtype=torch.long, device=self.device)
             self.env_target_obj_idx_1 = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
             self.env_target_obj_idx_2 = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
             self.env_target_obj_half_height_1 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
             self.env_target_obj_half_height_2 = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
 
-        # For the environments being reset, generate a new random order (0 or 1)
-        self.env_pick_order[env_idx] = torch.randint(0, len(self.target_model_ids), (len(env_idx),), device=self.device)
+        # For the environments being reset, generate a new random permutation of target objects.
+        # The first two elements of the permutation will be the targets for this episode.
+        num_targets = len(self.target_model_ids)
+        perms = torch.stack([torch.randperm(num_targets, device=self.device) for _ in range(len(env_idx))])
+        self.env_pick_order[env_idx] = perms
 
         # Update all tracking tensors based on the new order FOR ALL ENVS
-        # pick_order == 0 means the order is target_obj[0] -> target_obj[1]
-        # pick_order == 1 means the order is target_obj[1] -> target_obj[0]
-        pick_order_0_mask = (self.env_pick_order == 0)
-        self.env_target_obj_idx_1 = torch.where(pick_order_0_mask, self.target_obj_indices[0], self.target_obj_indices[1])
-        self.env_target_obj_idx_2 = torch.where(pick_order_0_mask, self.target_obj_indices[1], self.target_obj_indices[0])
-        self.env_target_obj_half_height_1 = torch.where(pick_order_0_mask, self.target_half_heights[0], self.target_half_heights[1])
-        self.env_target_obj_half_height_2 = torch.where(pick_order_0_mask, self.target_half_heights[1], self.target_half_heights[0])
+        target_obj_indices_tensor = torch.tensor(self.target_obj_indices, device=self.device, dtype=torch.long)
+        target_half_heights_tensor = torch.tensor(self.target_half_heights, device=self.device, dtype=torch.float32)
+
+        # First object to pick
+        first_pick_indices = self.env_pick_order[:, 0]
+        self.env_target_obj_idx_1 = target_obj_indices_tensor[first_pick_indices]
+        self.env_target_obj_half_height_1 = target_half_heights_tensor[first_pick_indices]
+
+        # Second object to pick
+        second_pick_indices = self.env_pick_order[:, 1]
+        self.env_target_obj_idx_2 = target_obj_indices_tensor[second_pick_indices]
+        self.env_target_obj_half_height_2 = target_half_heights_tensor[second_pick_indices]
 
         self.table_scene.initialize(env_idx)
         self._initialize_ycb_objects(env_idx, options)
@@ -329,6 +345,11 @@ class PickYCBSequentialEnv(BaseEnv):
             self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         else:
             self.stage1_done[env_idx] = False
+        
+        if not hasattr(self, "robot_cumulative_force"):
+            self.robot_cumulative_force = torch.zeros(self.num_envs, device=self.device)
+        self.robot_cumulative_force[env_idx] = 0.0  # reset for each episode
+    
     
     def _get_obs_extra(self, info: Dict):
         # in reality some people hack is_grasped into observations by checking if the gripper can close fully or not
@@ -358,11 +379,15 @@ class PickYCBSequentialEnv(BaseEnv):
 
         z_margin = 0.01
 
-        pick_order_0_mask = (self.env_pick_order == 0).view(-1, 1)
-        
-        pos_obj_1 = torch.where(pick_order_0_mask, self.target_actors[0].pose.p, self.target_actors[1].pose.p)
-        pos_obj_2 = torch.where(pick_order_0_mask, self.target_actors[1].pose.p, self.target_actors[0].pose.p)
+        b_idx = torch.arange(self.num_envs, device=self.device)
+        first_pick_indices = self.env_pick_order[:, 0]
+        second_pick_indices = self.env_pick_order[:, 1]
 
+        # Get poses of all target objects and select the ones for the current episode
+        all_target_pos = torch.stack([actor.pose.p for actor in self.target_actors], dim=1)
+        pos_obj_1 = all_target_pos[b_idx, first_pick_indices]
+        pos_obj_2 = all_target_pos[b_idx, second_pick_indices]
+        
         pos_basket_bottom = self.basket.pose.p.clone() + self.basket_pos_offset.to(self.device)
         
         # XY-plane check
@@ -390,16 +415,13 @@ class PickYCBSequentialEnv(BaseEnv):
         is_placed_in_basket_obj_1 = torch.logical_and(xy_flag_1, placed_in_basket_z_flag_1)
         is_placed_in_basket_obj_2 = torch.logical_and(xy_flag_2, placed_in_basket_z_flag_2)
 
-        pick_order_0_mask_b = (self.env_pick_order == 0)
-        is_grasped_target_0 = self.agent.is_grasping(self.target_actors[0])
-        is_grasped_target_1 = self.agent.is_grasping(self.target_actors[1])
-        is_grasped_obj_1 = torch.where(pick_order_0_mask_b, is_grasped_target_0, is_grasped_target_1)
-        is_grasped_obj_2 = torch.where(pick_order_0_mask_b, is_grasped_target_1, is_grasped_target_0)
+        all_is_grasped = torch.stack([self.agent.is_grasping(actor) for actor in self.target_actors], dim=1)
+        is_grasped_obj_1 = all_is_grasped[b_idx, first_pick_indices]
+        is_grasped_obj_2 = all_is_grasped[b_idx, second_pick_indices]
 
-        is_static_target_0 = self.target_actors[0].is_static(lin_thresh=1e-2, ang_thresh=0.5)
-        is_static_target_1 = self.target_actors[1].is_static(lin_thresh=1e-2, ang_thresh=0.5)
-        is_static_obj_1 = torch.where(pick_order_0_mask_b, is_static_target_0, is_static_target_1)
-        is_static_obj_2 = torch.where(pick_order_0_mask_b, is_static_target_1, is_static_target_0)
+        all_is_static = torch.stack([actor.is_static(lin_thresh=1e-2, ang_thresh=0.5) for actor in self.target_actors], dim=1)
+        is_static_obj_1 = all_is_static[b_idx, first_pick_indices]
+        is_static_obj_2 = all_is_static[b_idx, second_pick_indices]
 
         is_robot_static = self.agent.is_static(0.2)
 
@@ -410,9 +432,9 @@ class PickYCBSequentialEnv(BaseEnv):
         success = success_2 & is_robot_static
 
         # calculate and update robot force
-        # robot_force_on_links = self.agent.robot.get_net_contact_forces(self.force_articulation_link_names)
-        # robot_force = torch.sum(torch.norm(robot_force_on_links, dim=-1), dim=-1)
-        # self.robot_cumulative_force += robot_force
+        robot_force_on_links = self.agent.robot.get_net_contact_forces(self.force_articulation_link_names)
+        robot_force = torch.sum(torch.norm(robot_force_on_links, dim=-1), dim=-1)
+        self.robot_cumulative_force += robot_force
 
         return {
             "prev_stage1_done": prev_stage1_done,
@@ -430,8 +452,8 @@ class PickYCBSequentialEnv(BaseEnv):
             "success_obj_1": success_1,
             "success_obj_2": success_2,
             "success": success,
-            # "robot_force": robot_force,
-            # "robot_cumulative_force": self.robot_cumulative_force,
+            "robot_force": robot_force,
+            "robot_cumulative_force": self.robot_cumulative_force,
         }
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
@@ -460,9 +482,13 @@ class PickYCBSequentialEnv(BaseEnv):
         # =========================
         # Object 1: Reach -> Grasp -> Lift -> Approach -> Enter -> Place
         # =========================
-        pick_order_0_mask = (self.env_pick_order == 0).view(-1, 1)
+        b_idx = torch.arange(self.num_envs, device=self.device)
+        first_pick_indices = self.env_pick_order[:, 0]
+        second_pick_indices = self.env_pick_order[:, 1]
+
+        all_target_pos = torch.stack([actor.pose.p for actor in self.target_actors], dim=1)
+        obj_pos_1 = all_target_pos[b_idx, first_pick_indices]
         
-        obj_pos_1 = torch.where(pick_order_0_mask, self.target_actors[0].pose.p, self.target_actors[1].pose.p)
         obj_to_tcp_dist_1 = torch.linalg.norm(tcp_pose - obj_pos_1, dim=1)
 
         # 1. Reach reward (dense)
@@ -493,13 +519,10 @@ class PickYCBSequentialEnv(BaseEnv):
         reward = update_max(reward, mask_e1, cand)
 
         # 6. Place inside basket (ungrasp + static)
-        pick_order_0_mask_b = (self.env_pick_order == 0)
-        v_target_0 = torch.linalg.norm(self.target_actors[0].linear_velocity, dim=1)
-        av_target_0 = torch.linalg.norm(self.target_actors[0].angular_velocity, dim=1)
-        v_target_1 = torch.linalg.norm(self.target_actors[1].linear_velocity, dim=1)
-        av_target_1 = torch.linalg.norm(self.target_actors[1].angular_velocity, dim=1)
-        v1 = torch.where(pick_order_0_mask_b, v_target_0, v_target_1)
-        av1 = torch.where(pick_order_0_mask_b, av_target_0, av_target_1)
+        all_v = torch.stack([torch.linalg.norm(actor.linear_velocity, dim=1) for actor in self.target_actors], dim=1)
+        all_av = torch.stack([torch.linalg.norm(actor.angular_velocity, dim=1) for actor in self.target_actors], dim=1)
+        v1 = all_v[b_idx, first_pick_indices]
+        av1 = all_av[b_idx, first_pick_indices]
         static_reward_1 = 1.0 - torch.tanh(v1 * 5.0 + av1)
         cand = 10.0 + static_reward_1
         placed_mask_1 = info["is_placed_in_basket_obj_1"] & ~is_grasped_1
@@ -546,7 +569,7 @@ class PickYCBSequentialEnv(BaseEnv):
         # Object 2: Reach -> Grasp -> Lift -> Approach -> Enter -> Place (gated by obj1 progress)
         # =========================
         # 1. Reach object 2 (dense) - now gated by return to start
-        obj_pos_2 = torch.where(pick_order_0_mask, self.target_actors[1].pose.p, self.target_actors[0].pose.p)
+        obj_pos_2 = all_target_pos[b_idx, second_pick_indices]
         obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
         reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2)) + return_to_start_reward
         cand = 13.0 + reach_obj_2_reward
@@ -579,8 +602,8 @@ class PickYCBSequentialEnv(BaseEnv):
         reward = update_max(reward, mask_e2, cand)
 
         # 6. Place inside basket for O2 (ungrasp + static)
-        v2 = torch.where(pick_order_0_mask_b, v_target_1, v_target_0)
-        av2 = torch.where(pick_order_0_mask_b, av_target_1, av_target_0)
+        v2 = all_v[b_idx, second_pick_indices]
+        av2 = all_av[b_idx, second_pick_indices]
         static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
         cand = 24.0 + static_reward_2
         placed_mask_2 = mask_prog1 & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
@@ -605,15 +628,31 @@ class PickYCBSequentialEnv(BaseEnv):
             & info["is_static_obj_2"]
             & (~info["is_grasped_obj_2"])
         )
-        final_state_reward = robot_static_reward + reach_basket_top_reward
+        final_state_reward = robot_static_reward
         cand = 27.0 + final_state_reward
         reward = update_max(reward, final_state, cand)
 
         # =========================
         # Success bonus
         # =========================
-        reward_success = torch.full_like(reward, 30.0)
-        reward = update_max(reward, info["success"], reward_success)
+        # On success, encourage returning to start pose
+        target_qpos = torch.tensor(self.agent.keyframes["rest"].qpos, device=robot_qpos.device, dtype=robot_qpos.dtype) # [DoF]
+
+        diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
+        return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
+        cand = 29.0 + return_to_start_reward
+        reward = update_max(reward, info["success"], cand)
+    
+        # Add rewards for collision avoidance.
+        # 1. Reward for low instantaneous force.
+        step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
+                                                                min=self.robot_force_penalty_min) - self.robot_force_penalty_min)))
+        reward += step_no_col_rew
+
+        # 2. Reward for staying under cumulative force limit.
+        cum_col_under_thresh_rew = (info["robot_cumulative_force"] < self.robot_cumulative_force_limit).float()
+        reward += cum_col_under_thresh_rew
+        
         return reward
 
 
@@ -621,4 +660,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 30.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 32.0
