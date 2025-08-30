@@ -662,14 +662,14 @@ class PickYCBSequentialEnv(BaseEnv):
 
         diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
         return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
-        cand = 30.0 + return_to_start_reward
+        cand = 29.0 + return_to_start_reward
         reward = update_max(reward, info["success"], cand)
     
         # Add rewards for collision avoidance.
         # 1. Reward for low instantaneous force.
-        step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
-                                                                min=self.robot_force_penalty_min) - self.robot_force_penalty_min)))
-        reward += step_no_col_rew
+        # step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
+        #                                                         min=self.robot_force_penalty_min) - self.robot_force_penalty_min)))
+        # reward += step_no_col_rew
 
         # 2. Reward for staying under cumulative force limit.
         # cum_col_under_thresh_rew = (info["robot_cumulative_force"] < self.robot_cumulative_force_limit).float()
@@ -682,4 +682,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 32.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 30.0
