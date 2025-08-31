@@ -80,7 +80,7 @@ class PickYCBSequentialEnv(BaseEnv):
         
         # Define target objects
         self.target_model_ids = ["013_apple", "014_lemon", "017_orange"]
-        target_model_xy = [[0.03, -0.15], [0.03, 0.15], [0.03, 0.0]]
+        target_model_xy = [[0.05, -0.12], [0.05, 0.12], [0.05, 0.0]]
         self.target_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
@@ -91,13 +91,13 @@ class PickYCBSequentialEnv(BaseEnv):
             "002_master_chef_can", "004_sugar_box", "006_mustard_bottle", "007_tuna_fish_can", 
             "024_bowl", "025_mug", "015_peach", "008_pudding_box", 
             "011_banana", "005_tomato_soup_can", "009_gelatin_box", "012_strawberry", 
-            "019_pitcher_base", "016_pear", "018_plum", "040_large_marker"
+            "019_pitcher_base", "016_pear", "040_large_marker"
         ]
         clutter_model_xy = [
             [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
             [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
             [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], 
-            [0.12, 0.2], [-0.44, 0.6], [-0.49, -0.64], [-0.44, 0]
+            [-0.44, 0.6], [-0.49, -0.64], [-0.44, -0.2]
         ]
         self.clutter_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
@@ -258,8 +258,8 @@ class PickYCBSequentialEnv(BaseEnv):
 
         # 2. XY-OFFSET
         # Generate deterministic xy-offsets with different ranges
-        max_offsets = torch.zeros(num_models, 1, device=self.device)
-        max_offsets[:num_targets] = 0.04
+        max_offsets = torch.zeros(num_models, 2, device=self.device)
+        max_offsets[:num_targets] = torch.tensor([0.08, 0.03], device=self.device)
         max_offsets[num_targets:] = 0.01 
 
         xy_offsets = torch.stack([
@@ -563,7 +563,7 @@ class PickYCBSequentialEnv(BaseEnv):
         target_qpos = torch.tensor(self.agent.keyframes["rest"].qpos, device=robot_qpos.device, dtype=robot_qpos.dtype) # [DoF]
 
         diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
-        return_to_start_reward = 0.5 * (1.0 - torch.tanh(diff / 10.0))
+        return_to_start_reward = (1.0 - torch.tanh(diff / 5.0)) # change from 10 to 5
 
         # tol_val = max(float(self.robot_init_qpos_noise), 1e-6)
         # tol = torch.tensor(tol_val, device=diff.device, dtype=diff.dtype)
@@ -662,14 +662,14 @@ class PickYCBSequentialEnv(BaseEnv):
 
         diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
         return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
-        cand = 30.0 + return_to_start_reward
+        cand = 29.0 + return_to_start_reward
         reward = update_max(reward, info["success"], cand)
     
         # Add rewards for collision avoidance.
         # 1. Reward for low instantaneous force.
-        step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
-                                                                min=self.robot_force_penalty_min) - self.robot_force_penalty_min)))
-        reward += step_no_col_rew
+        # step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
+        #                                                         min=self.robot_force_penalty_min) - self.robot_force_penalty_min)))
+        # reward += step_no_col_rew
 
         # 2. Reward for staying under cumulative force limit.
         # cum_col_under_thresh_rew = (info["robot_cumulative_force"] < self.robot_cumulative_force_limit).float()
@@ -682,4 +682,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 32.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 30.0

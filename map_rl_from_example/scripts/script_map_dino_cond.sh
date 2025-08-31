@@ -16,4 +16,4 @@ python map_rl_from_example/ppo_map.py \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
     --start_condition_map \
-    --checkpoint "save_checkpoint/2_object_cam_aligned_image.pt"
+    --checkpoint "save_checkpoint/2_object_cam_aligned_image.pt" 

@@ -62,3 +62,7 @@ playground/
 dinov3
 
 segmentation_id_map.txt
+<<<<<<< HEAD
+=======
+*.zip
+>>>>>>> map_rl
