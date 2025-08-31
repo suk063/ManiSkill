@@ -10,6 +10,7 @@ python map_rl_from_example/ppo_map.py \
     --num_eval_steps=200 \
     --gamma=0.9 \
     --learning_rate=3e-4 \
+    --ent_coef=1e-3 \
     --vision_encoder=dino \
     --capture-video \
     --track \
