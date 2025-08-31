@@ -395,84 +395,51 @@ def main():
                 if env_dir_name not in grids:
                     print(f"[VIS] Grid for {env_dir_name} not found, skipping PCA.")
                     continue
-                env_dir = dataset_path / env_dir_name
                 grid = grids[env_dir_name]
                 print(f"\n[VIS] Running PCA on voxel features for {env_dir_name} ...")
 
-                rgb_files = sorted(list((env_dir / "rgb").glob("*.png")))
-                depth_files = sorted(list((env_dir / "depth").glob("*.png")))
+                if env_dir_name not in agg_coords or not agg_coords[env_dir_name]:
+                    print(f"[VIS] No aggregated coordinates found for {env_dir_name}, skipping PCA.")
+                    continue
 
-                if not rgb_files or not depth_files:
-                    print(f"[VIS] No image data found in {env_dir_name}, skipping.")
+                # Concatenate all coordinate tensors for the environment and convert to numpy
+                vertices_vis = torch.cat(agg_coords[env_dir_name], dim=0).numpy()
+                
+                # Optional: Downsample if there are too many points to avoid slow visualization
+                max_points_for_vis = 100000
+                if vertices_vis.shape[0] > max_points_for_vis:
+                    print(f"[VIS] Downsampling from {vertices_vis.shape[0]} to {max_points_for_vis} points for PCA visualization.")
+                    indices = np.random.choice(vertices_vis.shape[0], max_points_for_vis, replace=False)
+                    vertices_vis = vertices_vis[indices]
+
+                if vertices_vis.shape[0] == 0:
+                    print("[VIS] No vertices to visualize; skipping PCA visualization.")
                 else:
-                    pcds = []
-                    img_for_shape = cv2.imread(str(rgb_files[0]))
-                    H, W, _ = img_for_shape.shape
-                    intrinsic = o3d.camera.PinholeCameraIntrinsic(W, H, K[0,0], K[1,1], K[0,2], K[1,2])
-
-                    for i, (rgb_path, depth_path) in enumerate(zip(rgb_files, depth_files)):
-                        rgb_np = cv2.cvtColor(cv2.imread(str(rgb_path)), cv2.COLOR_BGR2RGB)
-                        depth_np = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)
-                        
-                        if np.max(depth_np) == 0: continue
-
-                        rgb_o3d = o3d.geometry.Image(rgb_np)
-                        depth_o3d = o3d.geometry.Image(depth_np)
-                        
-                        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                            rgb_o3d, depth_o3d, depth_scale=1000.0, depth_trunc=10.0, convert_rgb_to_intensity=False
-                        )
-                        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic)
-
-                        if pcd.has_points():
-                            pcd.transform(cam_to_world_poses[i])
-                            pcds.append(pcd)
+                    coords_t = torch.from_numpy(vertices_vis).to(DEVICE)
+                    with torch.no_grad():
+                        voxel_feat = grid.query_voxel_feature(coords_t)
+                        feats_t    = decoder(voxel_feat)
                     
-                    if not pcds:
-                        print("[VIS] No points generated for PCA. Skipping.")
-                    else:
-                        aggregated_pcd = sum(pcds, o3d.geometry.PointCloud())
-                        vertices_np = np.asarray(aggregated_pcd.points).astype(np.float32)
-
-                        ds_size = 0.05
-                        voxel_idx = np.floor(vertices_np / ds_size).astype(np.int32)
-                        _, uniq = np.unique(voxel_idx, axis=0, return_index=True)
-                        vertices_ds = vertices_np[uniq]
-
-                        in_x = (vertices_ds[:,0] >= SCENE_MIN[0]) & (vertices_ds[:,0] <= SCENE_MAX[0])
-                        in_y = (vertices_ds[:,1] >= SCENE_MIN[1]) & (vertices_ds[:,1] <= SCENE_MAX[1])
-                        in_z = (vertices_ds[:,2] >= SCENE_MIN[2]) & (vertices_ds[:,2] <= SCENE_MAX[2])
-                        in_bounds = in_x & in_y & in_z
-                        vertices_vis = vertices_ds[in_bounds]
-                        
-                        if vertices_vis.shape[0] == 0:
-                            print("[VIS] No vertices inside grid bounds; skipping PCA visualization.")
-                        else:
-                            coords_t = torch.from_numpy(vertices_vis).to(DEVICE)
-                            with torch.no_grad():
-                                voxel_feat = grid.query_voxel_feature(coords_t)
-                                feats_t    = decoder(voxel_feat)
-                            
-                            feats_np = feats_t.cpu().numpy()
-                            pca = PCA(n_components=3)
-                            feats_pca = pca.fit_transform(feats_np)
-                            scaler = MinMaxScaler()
-                            feats_pca_norm = scaler.fit_transform(feats_pca)
-                            
-                            p_fig = go.Figure()
-                            p_fig.add_trace(go.Scatter3d(
-                                x=vertices_vis[:,0], y=vertices_vis[:,1], z=vertices_vis[:,2],
-                                mode="markers",
-                                marker=dict(
-                                    size=10,
-                                    color=[f"rgb({int(r*255)},{int(g*255)},{int(b*255)})" for r,g,b in feats_pca_norm],
-                                    opacity=0.8)
-                            ))
-                            p_fig.update_layout(scene=dict(aspectmode="data"), margin=dict(l=0,r=0,b=0,t=0))
-                            
-                            PCA_HTML = output_path / f"{env_dir_name}_pca.html"
-                            pyo.plot(p_fig, filename=str(PCA_HTML), auto_open=False)
-                            print(f"[VIS] PCA visualization for {env_dir_name} saved to {PCA_HTML}")
+                    feats_np = feats_t.cpu().numpy()
+                    pca = PCA(n_components=3)
+                    feats_pca = pca.fit_transform(feats_np)
+                    scaler = MinMaxScaler()
+                    feats_pca_norm = scaler.fit_transform(feats_pca)
+                    
+                    p_fig = go.Figure()
+                    p_fig.add_trace(go.Scatter3d(
+                        x=vertices_vis[:,0], y=vertices_vis[:,1], z=vertices_vis[:,2],
+                        mode="markers",
+                        marker=dict(
+                            size=10,
+                            color=[f"rgb({int(r*255)},{int(g*255)},{int(b*255)})" for r,g,b in feats_pca_norm],
+                            opacity=0.8)
+                    ))
+                    p_fig.update_layout(scene=dict(aspectmode="data"), margin=dict(l=0,r=0,b=0,t=0))
+                    
+                    PCA_HTML = output_path / f"{env_dir_name}_pca.html"
+                    pyo.plot(p_fig, filename=str(PCA_HTML), auto_open=False)
+                    print(f"[VIS] PCA visualization for {env_dir_name} saved to {PCA_HTML}")
 
 
     # --- Fine-level Voxel Grid Visualization ---
