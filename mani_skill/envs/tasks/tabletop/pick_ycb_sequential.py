@@ -169,6 +169,7 @@ class PickYCBSequentialEnv(BaseEnv):
             for link in self.agent.robot.get_links()
             if link.name not in force_rew_ignore_links
         ]
+        self.target_qpos = torch.tensor(self.agent.keyframes["rest"].qpos, device=self.device, dtype=torch.float32)
 
     def _load_scene(self, options: dict):
         self.table_scene = TableSceneBuilder(
@@ -465,7 +466,7 @@ class PickYCBSequentialEnv(BaseEnv):
         tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
 
         prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        self.returned_to_start_flag = self.returned_to_start_flag | (self.stage1_done & (tcp_to_start_dist <= 0.025))
+        self.returned_to_start_flag = self.returned_to_start_flag | (self.stage1_done & (tcp_to_start_dist <= 0.05))
         just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
 
         # calculate and update robot force
@@ -577,18 +578,17 @@ class PickYCBSequentialEnv(BaseEnv):
         # Post-O1: Robot returns to initial pose
         # =========================
         robot_qpos = self.agent.robot.get_qpos()  # [B, DoF]
-        target_qpos = torch.tensor(self.agent.keyframes["rest"].qpos, device=robot_qpos.device, dtype=robot_qpos.dtype) # [DoF]
-
-        # diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
+        
+        # diff = torch.linalg.norm(robot_qpos - self.target_qpos, dim=1)
         # qpos_return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
-        diff = torch.mean(torch.abs(robot_qpos - target_qpos), dim=1)
-        qpos_return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
+        diff = torch.mean(torch.abs(robot_qpos - self.target_qpos), dim=1)
+        qpos_return_to_start_reward = 2 * (1.0 - torch.tanh(2 * diff))
 
-        start_pose_pos = torch.tensor([0, 0, 0.1474], device=tcp_pose.device, dtype=tcp_pose.dtype)
-        tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
-        tcp_return_to_start_reward = 2 * (1.0 - torch.tanh(5.0 * tcp_to_start_dist))
+        # start_pose_pos = torch.tensor([0, 0, 0.1474], device=tcp_pose.device, dtype=tcp_pose.dtype)
+        # tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
+        # tcp_return_to_start_reward = 2 * (1.0 - torch.tanh(5.0 * tcp_to_start_dist))
 
-        return_to_start_reward = qpos_return_to_start_reward + tcp_return_to_start_reward
+        return_to_start_reward = qpos_return_to_start_reward # + tcp_return_to_start_reward
         cand = 13.0 + return_to_start_reward
         reward = update_max(reward, mask_prog1, cand)
         
@@ -666,11 +666,10 @@ class PickYCBSequentialEnv(BaseEnv):
         # Success bonus
         # =========================
         # On success, encourage returning to start pose
-        target_qpos = torch.tensor(self.agent.keyframes["rest"].qpos, device=robot_qpos.device, dtype=robot_qpos.dtype) # [DoF]
-
-        # diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
-        diff = torch.mean(torch.abs(robot_qpos - target_qpos), dim=1)
-        return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
+        
+        # diff = torch.linalg.norm(robot_qpos - self.target_qpos, dim=1)
+        diff = torch.mean(torch.abs(robot_qpos - self.target_qpos), dim=1)
+        return_to_start_reward = (1.0 - torch.tanh(2 * diff))
         cand = 31.0 + return_to_start_reward
         reward = update_max(reward, info["success"], cand)
     
