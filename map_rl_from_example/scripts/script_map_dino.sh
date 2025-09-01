@@ -3,7 +3,7 @@ python map_rl_from_example/ppo_map.py \
     --control_mode=pd_joint_vel \
     --exp_name=YCB_sequential_xarm6_ppo_map_dino_zero \
     --num_envs=100 \
-    --num_eval_envs=12 \
+    --num_eval_envs=20 \
     --eval_freq=20 \
     --total_timesteps=50_000_000 \
     --num_steps=200 \
@@ -16,6 +16,6 @@ python map_rl_from_example/ppo_map.py \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
-    --checkpoint "save_checkpoint/ckpt_61.pt" \
+    # --checkpoint "save_checkpoint/ckpt_81.pt" \
     # --load_actor_logstd
     # --start_condition_map

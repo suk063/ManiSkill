@@ -80,7 +80,7 @@ class PickYCBSequentialEnv(BaseEnv):
         
         # Define target objects
         self.target_model_ids = ["013_apple", "014_lemon", "017_orange"]
-        target_model_xy = [[0.0, -0.12], [0.0, 0.12], [0.0, 0.0]]
+        target_model_xy = [[-0.02, -0.12], [-0.02, 0.12], [0.08, 0.0]]
         self.target_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
@@ -259,7 +259,7 @@ class PickYCBSequentialEnv(BaseEnv):
         # 2. XY-OFFSET
         # Generate deterministic xy-offsets with different ranges
         max_offsets = torch.zeros(num_models, 2, device=self.device)
-        max_offsets[:num_targets] = torch.tensor([0.05, 0.03], device=self.device)
+        max_offsets[:num_targets] = torch.tensor([0.04, 0.04], device=self.device)
         max_offsets[num_targets:] = 0.01 
 
         xy_offsets = torch.stack([
@@ -397,6 +397,11 @@ class PickYCBSequentialEnv(BaseEnv):
     def evaluate(self):
         if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
             self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        
+        if (not hasattr(self, "returned_to_start_flag")
+            or self.returned_to_start_flag.shape[0] != self.num_envs):
+            self.returned_to_start_flag = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
         prev_stage1_done = self.stage1_done.clone()
 
         z_margin = 0.01
@@ -445,13 +450,23 @@ class PickYCBSequentialEnv(BaseEnv):
         is_static_obj_1 = all_is_static[b_idx, first_pick_indices]
         is_static_obj_2 = all_is_static[b_idx, second_pick_indices]
 
-        is_robot_static = self.agent.is_static(0.2)
+        robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), dim=1)  # [B]
+        is_robot_static = (robot_qvel <= 0.2)                               # [B] bool
 
         success_1 = is_placed_in_basket_obj_1 & is_static_obj_1 & (~is_grasped_obj_1)
         self.stage1_done = prev_stage1_done | success_1
         success_2 = self.stage1_done & is_placed_in_basket_obj_2 & is_static_obj_2 & (~is_grasped_obj_2)
         
         success = success_2 & is_robot_static
+
+        # --- Custom flags for reward, managed with persistent state ---
+        tcp_pose = self.agent.tcp.pose.p
+        start_pose_pos = torch.tensor([0, 0, 0.15], device=tcp_pose.device, dtype=tcp_pose.dtype)
+        tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
+
+        prev_returned_to_start_flag = self.returned_to_start_flag.clone()
+        self.returned_to_start_flag = self.returned_to_start_flag | (self.stage1_done & (tcp_to_start_dist <= 0.05))
+        just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
 
         # calculate and update robot force
         robot_force_on_links = self.agent.robot.get_net_contact_forces(self.force_articulation_link_names)
@@ -476,6 +491,8 @@ class PickYCBSequentialEnv(BaseEnv):
             "success": success,
             "robot_force": robot_force,
             "robot_cumulative_force": self.robot_cumulative_force,
+            "returned_to_start": self.returned_to_start_flag,
+            "just_returned_to_start": just_returned_to_start,
         }
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
@@ -488,7 +505,7 @@ class PickYCBSequentialEnv(BaseEnv):
         basket_inside_pos_1[:, 2] = basket_inside_pos_1[:, 2] + self.env_target_obj_half_height_1 + 0.01
 
         basket_top_target = basket_top_pos.clone()
-        basket_top_target[:, 2] += 0.05  # slightly above the rim to encourage clearing the edge
+        basket_top_target[:, 2] += 0.06  # slightly above the rim to encourage clearing the edge
 
         prev_stage1_done = info["prev_stage1_done"]
  
@@ -562,56 +579,47 @@ class PickYCBSequentialEnv(BaseEnv):
         robot_qpos = self.agent.robot.get_qpos()  # [B, DoF]
         target_qpos = torch.tensor(self.agent.keyframes["rest"].qpos, device=robot_qpos.device, dtype=robot_qpos.dtype) # [DoF]
 
-        diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
-        return_to_start_reward = (1.0 - torch.tanh(diff / 5.0)) # change from 10 to 5
+        # diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
+        # qpos_return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
+        diff = torch.mean(torch.abs(robot_qpos - target_qpos), dim=1)
+        qpos_return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
 
-        # tol_val = max(float(self.robot_init_qpos_noise), 1e-6)
-        # tol = torch.tensor(tol_val, device=diff.device, dtype=diff.dtype)
-        # linf_err_soft = tol * torch.logsumexp(diff / tol, dim=1)  # [B]
-        # k = torch.atanh(torch.tensor(0.5, device=diff.device, dtype=diff.dtype)) / tol
-        # return_to_start_reward = 2.0 * (1.0 - torch.tanh(k * linf_err_soft))
+        start_pose_pos = torch.tensor([0, 0, 0.15], device=tcp_pose.device, dtype=tcp_pose.dtype)
+        tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
+        tcp_return_to_start_reward = 2 * (1.0 - torch.tanh(5.0 * tcp_to_start_dist))
 
-        # --- Gate to start Object 2 task ---
-        # linf_err_hard = diff.max(dim=1).values   # [B]
-        # near_home_and_slow = (linf_err_hard <= tol) & (v_norm <= 0.1)
-
-        # v_norm = torch.linalg.norm(self.agent.robot.get_qvel(), dim=1)         # [B]
-        # robot_static_reward = 1.0 - torch.tanh(5.0 * v_norm)  # [0, 1)
-        # cand = 13.0 + robot_static_reward
-        # eeward = update_max(reward, mask_prog1, cand)
-
-        # prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        # self.returned_to_start_flag = self.returned_to_start_flag | (mask_prog1 & (v_norm <= 0.02))
-
-        # just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
-        # cand = 14.0
-        # reward = update_max(reward, just_returned_to_start, cand)
+        return_to_start_reward = tcp_return_to_start_reward + qpos_return_to_start_reward
+        cand = 13.0 + return_to_start_reward
+        reward = update_max(reward, mask_prog1, cand)
+        
+        cand = 16.0
+        reward = update_max(reward, info["just_returned_to_start"], cand)
 
         # =========================
-        # Object 2: Reach -> Grasp -> Lift -> Approach -> Enter -> Place (gated by obj1 progress)
+        # Object 2: Reach -> Grasp -> Lift -> Approach -> Enter -> Place (gated by return to start flag)
         # =========================
         # 1. Reach object 2 (dense) - now gated by return to start
         obj_pos_2 = all_target_pos[b_idx, second_pick_indices]
         obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
-        reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2)) + return_to_start_reward
-        cand = 13.0 + reach_obj_2_reward
-        reward = update_max(reward, mask_prog1, cand)
+        reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2))
+        cand = 16.0 + reach_obj_2_reward
+        reward = update_max(reward, info["returned_to_start"], cand)
 
         # 2. Grasp reward
-        is_grasped_2 = mask_prog1 & info["is_grasped_obj_2"]
-        cand = 19.0
+        is_grasped_2 = info["returned_to_start"] & info["is_grasped_obj_2"]
+        cand = 21.0
         reward = update_max(reward, is_grasped_2, cand)
 
         # 3. Lift reward
         obj_bottom_z_2 = obj_pos_2[..., 2] - self.env_target_obj_half_height_2
         lifted_2 = is_grasped_2 & (obj_bottom_z_2 >= 0.01)
-        cand = 20.0
+        cand = 22.0
         reward = update_max(reward, lifted_2, cand)
 
         # 4. Approach basket top for O2 (while grasped)
         obj_to_basket_top_dist_2 = torch.linalg.norm(basket_top_target - obj_pos_2, dim=1)
         reach_basket_top_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_top_dist_2)
-        cand = 20.0 + 3.0 * reach_basket_top_reward_2
+        cand = 22.0 + 3.0 * reach_basket_top_reward_2
         reward = update_max(reward, lifted_2, cand)
 
         # 5. Enter basket for O2
@@ -620,19 +628,19 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos_2 - obj_pos_2, dim=1)
         reach_inside_basket_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_2)
         mask_e2 = lifted_2 & info["is_entering_basket_obj_2"]
-        cand = 23.0 + reach_inside_basket_reward_2
+        cand = 25.0 + reach_inside_basket_reward_2
         reward = update_max(reward, mask_e2, cand)
 
         # 6. Place inside basket for O2 (ungrasp + static)
         v2 = all_v[b_idx, second_pick_indices]
         av2 = all_av[b_idx, second_pick_indices]
         static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
-        cand = 24.0 + static_reward_2
-        placed_mask_2 = mask_prog1 & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
+        cand = 26.0 + static_reward_2
+        placed_mask_2 = info["returned_to_start"] & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
         reward = update_max(reward, placed_mask_2, cand)
 
         # 7. object 2 is placed in basket reward
-        cand = 27.0
+        cand = 29.0
         reward = update_max(reward, info["success_obj_2"], cand)
 
         # =========================
@@ -651,7 +659,7 @@ class PickYCBSequentialEnv(BaseEnv):
             & (~info["is_grasped_obj_2"])
         )
         final_state_reward = robot_static_reward
-        cand = 27.0 + final_state_reward
+        cand = 29.0 + final_state_reward
         reward = update_max(reward, final_state, cand)
 
         # =========================
@@ -660,11 +668,21 @@ class PickYCBSequentialEnv(BaseEnv):
         # On success, encourage returning to start pose
         target_qpos = torch.tensor(self.agent.keyframes["rest"].qpos, device=robot_qpos.device, dtype=robot_qpos.dtype) # [DoF]
 
-        diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
+        # diff = torch.linalg.norm(robot_qpos - target_qpos, dim=1)
+        diff = torch.mean(torch.abs(robot_qpos - target_qpos), dim=1)
         return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
-        cand = 29.0 + return_to_start_reward
+        cand = 31.0 + return_to_start_reward
         reward = update_max(reward, info["success"], cand)
     
+        # Debug: Velocity regularization for joints 1, 4, 6
+        qvel = self.agent.robot.get_qvel()
+        # arm joints are the first 6, indices 0, 3, 5 are for joints 1, 4, 6
+        joint_indices = torch.tensor([0, 3, 5], device=qvel.device, dtype=torch.long)
+        selected_qvel = qvel[:, joint_indices]
+        vel_norm = torch.linalg.norm(selected_qvel, dim=1)
+        vel_reg_reward = 1.0 - torch.tanh(5.0 * vel_norm)
+        reward += vel_reg_reward
+
         # Add rewards for collision avoidance.
         # 1. Reward for low instantaneous force.
         # step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
@@ -682,4 +700,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 30.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 33.0
