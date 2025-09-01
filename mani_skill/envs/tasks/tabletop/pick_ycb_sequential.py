@@ -461,11 +461,11 @@ class PickYCBSequentialEnv(BaseEnv):
 
         # --- Custom flags for reward, managed with persistent state ---
         tcp_pose = self.agent.tcp.pose.p
-        start_pose_pos = torch.tensor([0, 0, 0.15], device=tcp_pose.device, dtype=tcp_pose.dtype)
+        start_pose_pos = torch.tensor([0, 0, 0.1474], device=tcp_pose.device, dtype=tcp_pose.dtype)
         tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
 
         prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        self.returned_to_start_flag = self.returned_to_start_flag | (self.stage1_done & (tcp_to_start_dist <= 0.1))
+        self.returned_to_start_flag = self.returned_to_start_flag | (self.stage1_done & (tcp_to_start_dist <= 0.03))
         just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
 
         # calculate and update robot force
@@ -584,7 +584,7 @@ class PickYCBSequentialEnv(BaseEnv):
         diff = torch.mean(torch.abs(robot_qpos - target_qpos), dim=1)
         qpos_return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
 
-        start_pose_pos = torch.tensor([0, 0, 0.15], device=tcp_pose.device, dtype=tcp_pose.dtype)
+        start_pose_pos = torch.tensor([0, 0, 0.1474], device=tcp_pose.device, dtype=tcp_pose.dtype)
         tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
         tcp_return_to_start_reward = 2 * (1.0 - torch.tanh(5.0 * tcp_to_start_dist))
 
