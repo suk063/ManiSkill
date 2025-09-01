@@ -466,7 +466,7 @@ class PickYCBSequentialEnv(BaseEnv):
         tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
 
         prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        self.returned_to_start_flag = self.returned_to_start_flag | (self.stage1_done & (tcp_to_start_dist <= 0.05))
+        self.returned_to_start_flag = self.returned_to_start_flag | (self.stage1_done & (tcp_to_start_dist <= 0.03))
         just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
 
         # calculate and update robot force
