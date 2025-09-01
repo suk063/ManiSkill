@@ -79,8 +79,8 @@ class PickYCBSequentialEnv(BaseEnv):
         }
         
         # Define target objects
-        self.target_model_ids = ["013_apple", "014_lemon", "017_orange"]
-        target_model_xy = [[-0.02, -0.12], [-0.02, 0.12], [0.08, 0.0]]
+        self.target_model_ids = ["013_apple", "014_lemon"]
+        target_model_xy = [[0.0, -0.10], [0.0, 0.10]]
         self.target_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
@@ -91,13 +91,13 @@ class PickYCBSequentialEnv(BaseEnv):
             "002_master_chef_can", "004_sugar_box", "006_mustard_bottle", "007_tuna_fish_can", 
             "024_bowl", "025_mug", "015_peach", "008_pudding_box", 
             "011_banana", "005_tomato_soup_can", "009_gelatin_box", "012_strawberry", 
-            "019_pitcher_base", "016_pear", "040_large_marker"
+            "019_pitcher_base", "016_pear", "040_large_marker", "017_orange"
         ]
         clutter_model_xy = [
             [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
             [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
             [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], 
-            [-0.44, 0.6], [-0.49, -0.64], [-0.44, -0.2]
+            [-0.44, 0.6], [-0.49, -0.64], [-0.44, -0.2], [0.12, 0.0]
         ]
         self.clutter_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
@@ -259,7 +259,7 @@ class PickYCBSequentialEnv(BaseEnv):
         # 2. XY-OFFSET
         # Generate deterministic xy-offsets with different ranges
         max_offsets = torch.zeros(num_models, 2, device=self.device)
-        max_offsets[:num_targets] = torch.tensor([0.04, 0.04], device=self.device)
+        max_offsets[:num_targets] = torch.tensor([0.05, 0.05], device=self.device)
         max_offsets[num_targets:] = 0.01 
 
         xy_offsets = torch.stack([
