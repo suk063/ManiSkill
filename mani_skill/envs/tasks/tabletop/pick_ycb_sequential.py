@@ -675,13 +675,13 @@ class PickYCBSequentialEnv(BaseEnv):
         reward = update_max(reward, info["success"], cand)
     
         # Debug: Velocity regularization for joints 1, 4, 6
-        qvel = self.agent.robot.get_qvel()
-        # arm joints are the first 6, indices 0, 3, 5 are for joints 1, 4, 6
-        joint_indices = torch.tensor([0, 3, 5], device=qvel.device, dtype=torch.long)
-        selected_qvel = qvel[:, joint_indices]
-        vel_norm = torch.linalg.norm(selected_qvel, dim=1)
-        vel_reg_reward = 1.0 - torch.tanh(5.0 * vel_norm)
-        reward += vel_reg_reward
+        # qvel = self.agent.robot.get_qvel()
+        # # arm joints are the first 6, indices 0, 3, 5 are for joints 1, 4, 6
+        # joint_indices = torch.tensor([0, 3, 5], device=qvel.device, dtype=torch.long)
+        # selected_qvel = qvel[:, joint_indices]
+        # vel_norm = torch.linalg.norm(selected_qvel, dim=1)
+        # vel_reg_reward = 1.0 - torch.tanh(5.0 * vel_norm)
+        # reward += vel_reg_reward
 
         # Add rewards for collision avoidance.
         # 1. Reward for low instantaneous force.
@@ -700,4 +700,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 33.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 32.0
