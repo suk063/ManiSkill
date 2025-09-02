@@ -99,6 +99,8 @@ class Args:
     # task specification
     model_ids: List[str] = field(default_factory=lambda: ["013_apple", "014_lemon", "017_orange", "012_strawberry", "011_banana"])
     """the list of model ids to use for the environment"""
+    object_num: int = 2
+    """the number of target objects to use for the environment"""
     
     # Map-related arguments
     use_map: bool = False
@@ -228,6 +230,7 @@ if __name__ == "__main__":
         env_kwargs = dict(obs_mode="rgb", render_mode=args.render_mode, sim_backend="physx_cuda")
     if args.control_mode is not None:
         env_kwargs["control_mode"] = args.control_mode
+    env_kwargs["object_num"] = args.object_num
     
     eval_env_kwargs = env_kwargs.copy()
     eval_env_kwargs["is_eval"] = True
