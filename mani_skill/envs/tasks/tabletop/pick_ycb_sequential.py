@@ -79,26 +79,51 @@ class PickYCBSequentialEnv(BaseEnv):
         }
         
         # Define target objects
-        self.target_model_ids = ["013_apple", "014_lemon", "017_orange"]
-        target_model_xy = [[-0.02, -0.12], [-0.02, 0.12], [0.08, 0.0]]
+        # self.target_model_ids = ["013_apple", "014_lemon", "017_orange"]
+        # target_model_xy = [[-0.02, -0.12], [-0.02, 0.12], [0.08, 0.0]]
+        self.object_num = kwargs.pop("object_num", 2)
+        
+        if self.object_num == 2:
+            self.target_model_ids = ["013_apple", "014_lemon"]
+            target_model_xy = [[0.0, -0.1], [0.0, 0.1]]
+            
+            # Define clutter objects
+            self.clutter_model_ids = [
+                "002_master_chef_can", "004_sugar_box", "006_mustard_bottle", "007_tuna_fish_can", 
+                "024_bowl", "025_mug", "015_peach", "008_pudding_box", 
+                "011_banana", "005_tomato_soup_can", "009_gelatin_box", "012_strawberry", 
+                "019_pitcher_base", "016_pear", "040_large_marker", "017_orange"
+            ]
+            clutter_model_xy = [
+                [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
+                [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
+                [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], 
+                [-0.44, 0.6], [-0.49, -0.64], [-0.44, -0.2], [0.14, 0.0]
+            ]
+        elif self.object_num == 3:
+            self.target_model_ids = ["013_apple", "014_lemon", "017_orange"]
+            target_model_xy = [[-0.02, -0.12], [-0.02, 0.12], [0.08, 0.0]]
+            
+            self.clutter_model_ids = [
+                "002_master_chef_can", "004_sugar_box", "006_mustard_bottle", "007_tuna_fish_can", 
+                "024_bowl", "025_mug", "015_peach", "008_pudding_box", 
+                "011_banana", "005_tomato_soup_can", "009_gelatin_box", "012_strawberry", 
+                "019_pitcher_base", "016_pear", "040_large_marker"
+            ]
+            clutter_model_xy = [
+                [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
+                [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
+                [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], 
+                [-0.44, 0.6], [-0.49, -0.64], [-0.44, -0.2]
+            ]
+        else:
+            raise ValueError(f"Invalid object number: {self.object_num}")
+        
         self.target_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.target_model_ids, target_model_xy)
         ]
 
-        # Define clutter objects
-        self.clutter_model_ids = [
-            "002_master_chef_can", "004_sugar_box", "006_mustard_bottle", "007_tuna_fish_can", 
-            "024_bowl", "025_mug", "015_peach", "008_pudding_box", 
-            "011_banana", "005_tomato_soup_can", "009_gelatin_box", "012_strawberry", 
-            "019_pitcher_base", "016_pear", "040_large_marker"
-        ]
-        clutter_model_xy = [
-            [-0.096, -0.66], [-0.21, 0.55], [-0.44, 0.34], [-0.39, -0.42],
-            [-0.25, -0.35], [-0.3, -0.57], [0.069, -0.45], [-0.29, 0.25],
-            [0.0, 0.52], [-0.087, -0.35], [0.03, 0.3], [-0.1, 0.25], 
-            [-0.44, 0.6], [-0.49, -0.64], [-0.44, -0.2]
-        ]
         self.clutter_model_poses = [
             sapien.Pose(p=[xy[0], xy[1], self.object_heights_half[model_id]])
             for model_id, xy in zip(self.clutter_model_ids, clutter_model_xy)
@@ -259,8 +284,11 @@ class PickYCBSequentialEnv(BaseEnv):
 
         # 2. XY-OFFSET
         # Generate deterministic xy-offsets with different ranges
-        max_offsets = torch.zeros(num_models, 2, device=self.device)
-        max_offsets[:num_targets] = torch.tensor([0.04, 0.04], device=self.device)
+        max_offsets = torch.zeros(num_models, 1, device=self.device)
+        if self.object_num == 2:
+            max_offsets[:num_targets] = 0.05
+        elif self.object_num == 3:
+            max_offsets[:num_targets] = 0.04
         max_offsets[num_targets:] = 0.01 
 
         xy_offsets = torch.stack([
@@ -359,11 +387,6 @@ class PickYCBSequentialEnv(BaseEnv):
         self.table_scene.initialize(env_idx)
         self._initialize_ycb_objects(env_idx, options)
     
-        if not hasattr(self, "returned_to_start_flag") or self.returned_to_start_flag.shape[0] != self.num_envs:
-            self.returned_to_start_flag = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        else:
-            self.returned_to_start_flag[env_idx] = False
-
         if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
             self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         else:
@@ -399,10 +422,6 @@ class PickYCBSequentialEnv(BaseEnv):
         if not hasattr(self, "stage1_done") or self.stage1_done.shape[0] != self.num_envs:
             self.stage1_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         
-        if (not hasattr(self, "returned_to_start_flag")
-            or self.returned_to_start_flag.shape[0] != self.num_envs):
-            self.returned_to_start_flag = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-
         prev_stage1_done = self.stage1_done.clone()
 
         z_margin = 0.01
@@ -460,15 +479,6 @@ class PickYCBSequentialEnv(BaseEnv):
         
         success = success_2 & is_robot_static
 
-        # --- Custom flags for reward, managed with persistent state ---
-        tcp_pose = self.agent.tcp.pose.p
-        start_pose_pos = torch.tensor([0, 0, 0.1474], device=tcp_pose.device, dtype=tcp_pose.dtype)
-        tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
-
-        prev_returned_to_start_flag = self.returned_to_start_flag.clone()
-        self.returned_to_start_flag = self.returned_to_start_flag | (self.stage1_done & (tcp_to_start_dist <= 0.05))
-        just_returned_to_start = ~prev_returned_to_start_flag & self.returned_to_start_flag
-
         # calculate and update robot force
         robot_force_on_links = self.agent.robot.get_net_contact_forces(self.force_articulation_link_names)
         robot_force = torch.sum(torch.norm(robot_force_on_links, dim=-1), dim=-1)
@@ -492,8 +502,6 @@ class PickYCBSequentialEnv(BaseEnv):
             "success": success,
             "robot_force": robot_force,
             "robot_cumulative_force": self.robot_cumulative_force,
-            "returned_to_start": self.returned_to_start_flag,
-            "just_returned_to_start": just_returned_to_start,
         }
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: Dict):
@@ -575,29 +583,11 @@ class PickYCBSequentialEnv(BaseEnv):
         mask_prog1 = prev_stage1_done | info["success_obj_1"]
 
         # =========================
-        # Post-O1: Robot returns to initial pose
+        # Object 2: Reach -> Grasp -> Lift -> Approach -> Enter -> Place (gated by obj1 progress)
         # =========================
         robot_qpos = self.agent.robot.get_qpos()  # [B, DoF]
-        
-        # diff = torch.linalg.norm(robot_qpos - self.target_qpos, dim=1)
-        # qpos_return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
-        diff = torch.mean(torch.abs(robot_qpos - self.target_qpos), dim=1)
-        qpos_return_to_start_reward = (1.0 - torch.tanh(5 * diff))
-
-        start_pose_pos = torch.tensor([0, 0, 0.1474], device=tcp_pose.device, dtype=tcp_pose.dtype)
-        tcp_to_start_dist = torch.linalg.norm(tcp_pose - start_pose_pos, dim=1)
-        tcp_return_to_start_reward = 2.0 * (1.0 - torch.tanh(5.0 * tcp_to_start_dist))
-
-        # robot_qvel = torch.linalg.norm(self.agent.robot.get_qvel(), dim=1)
-        # robot_static_reward = 0.5 * (1.0 - torch.tanh(5.0 * robot_qvel))
-
-        return_to_start_reward = qpos_return_to_start_reward + tcp_return_to_start_reward # + robot_static_reward
-        cand = 13.0 + return_to_start_reward
-
-        reward = update_max(reward, mask_prog1, cand)
-        
-        cand = 17.0
-        reward = update_max(reward, info["just_returned_to_start"], cand)
+        diff = torch.linalg.norm(robot_qpos - self.target_qpos, dim=1)
+        return_to_start_reward = 0.5 * (1.0 - torch.tanh(diff / 5.0))
 
         # =========================
         # Object 2: Reach -> Grasp -> Lift -> Approach -> Enter -> Place (gated by return to start flag)
@@ -605,25 +595,25 @@ class PickYCBSequentialEnv(BaseEnv):
         # 1. Reach object 2 (dense) - now gated by return to start
         obj_pos_2 = all_target_pos[b_idx, second_pick_indices]
         obj_to_tcp_dist_2 = torch.linalg.norm(tcp_pose - obj_pos_2, dim=1)
-        reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2))
-        cand = 17.0 + reach_obj_2_reward
-        reward = update_max(reward, info["returned_to_start"], cand)
+        reach_obj_2_reward = 3.0 * (1.0 - torch.tanh(5.0 * obj_to_tcp_dist_2)) + return_to_start_reward
+        cand = 13.0 + reach_obj_2_reward 
+        reward = update_max(reward, mask_prog1, cand)
 
         # 2. Grasp reward
-        is_grasped_2 = info["returned_to_start"] & info["is_grasped_obj_2"]
-        cand = 22.0
+        is_grasped_2 = mask_prog1 & info["is_grasped_obj_2"]
+        cand = 19.0
         reward = update_max(reward, is_grasped_2, cand)
 
         # 3. Lift reward
         obj_bottom_z_2 = obj_pos_2[..., 2] - self.env_target_obj_half_height_2
         lifted_2 = is_grasped_2 & (obj_bottom_z_2 >= 0.01)
-        cand = 23.0
+        cand = 20.0
         reward = update_max(reward, lifted_2, cand)
 
         # 4. Approach basket top for O2 (while grasped)
         obj_to_basket_top_dist_2 = torch.linalg.norm(basket_top_target - obj_pos_2, dim=1)
         reach_basket_top_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_top_dist_2)
-        cand = 23.0 + 3.0 * reach_basket_top_reward_2
+        cand = 20.0 + 3.0 * reach_basket_top_reward_2
         reward = update_max(reward, lifted_2, cand)
 
         # 5. Enter basket for O2
@@ -632,19 +622,19 @@ class PickYCBSequentialEnv(BaseEnv):
         obj_to_basket_inside_dist_2 = torch.linalg.norm(basket_inside_pos_2 - obj_pos_2, dim=1)
         reach_inside_basket_reward_2 = 1.0 - torch.tanh(5.0 * obj_to_basket_inside_dist_2)
         mask_e2 = lifted_2 & info["is_entering_basket_obj_2"]
-        cand = 26.0 + reach_inside_basket_reward_2
+        cand = 23.0 + reach_inside_basket_reward_2
         reward = update_max(reward, mask_e2, cand)
 
         # 6. Place inside basket for O2 (ungrasp + static)
         v2 = all_v[b_idx, second_pick_indices]
         av2 = all_av[b_idx, second_pick_indices]
         static_reward_2 = 1.0 - torch.tanh(v2 * 5.0 + av2)
-        cand = 27.0 + static_reward_2
-        placed_mask_2 = info["returned_to_start"] & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
+        cand = 24.0 + static_reward_2
+        placed_mask_2 = mask_prog1 & info["is_placed_in_basket_obj_2"] & ~info["is_grasped_obj_2"]
         reward = update_max(reward, placed_mask_2, cand)
 
         # 7. object 2 is placed in basket reward
-        cand = 30.0
+        cand = 27.0
         reward = update_max(reward, info["success_obj_2"], cand)
 
         # =========================
@@ -663,7 +653,7 @@ class PickYCBSequentialEnv(BaseEnv):
             & (~info["is_grasped_obj_2"])
         )
         final_state_reward = robot_static_reward
-        cand = 30.0 + final_state_reward
+        cand = 27.0 + final_state_reward
         reward = update_max(reward, final_state, cand)
 
         # =========================
@@ -671,30 +661,11 @@ class PickYCBSequentialEnv(BaseEnv):
         # =========================
         # On success, encourage returning to start pose
         
-        # diff = torch.linalg.norm(robot_qpos - self.target_qpos, dim=1)
-        diff = torch.mean(torch.abs(robot_qpos - self.target_qpos), dim=1)
-        return_to_start_reward = (1.0 - torch.tanh(5 * diff))
-        cand = 32.0 + return_to_start_reward
+        robot_qpos = self.agent.robot.get_qpos()  # [B, DoF]
+        diff = torch.linalg.norm(robot_qpos - self.target_qpos, dim=1)
+        return_to_start_reward = (1.0 - torch.tanh(diff / 5.0))
+        cand = 29.0 + return_to_start_reward
         reward = update_max(reward, info["success"], cand)
-    
-        # Debug: Velocity regularization for joints 1, 4, 6
-        # qvel = self.agent.robot.get_qvel()
-        # # arm joints are the first 6, indices 0, 3, 5 are for joints 1, 4, 6
-        # joint_indices = torch.tensor([0, 3, 5], device=qvel.device, dtype=torch.long)
-        # selected_qvel = qvel[:, joint_indices]
-        # vel_norm = torch.linalg.norm(selected_qvel, dim=1)
-        # vel_reg_reward = 1.0 - torch.tanh(5.0 * vel_norm)
-        # reward += vel_reg_reward
-
-        # Add rewards for collision avoidance.
-        # 1. Reward for low instantaneous force.
-        # step_no_col_rew = (1 - torch.tanh(3 * (torch.clamp(self.robot_force_mult * info["robot_force"], 
-        #                                                         min=self.robot_force_penalty_min) - self.robot_force_penalty_min)))
-        # reward += step_no_col_rew
-
-        # 2. Reward for staying under cumulative force limit.
-        # cum_col_under_thresh_rew = (info["robot_cumulative_force"] < self.robot_cumulative_force_limit).float()
-        # reward += cum_col_under_thresh_rew
         
         return reward
 
@@ -703,4 +674,4 @@ class PickYCBSequentialEnv(BaseEnv):
         """
         Normalize dense reward to a ~[0, 1] range for stability (adjust the divisor after inspecting logs).
         """
-        return self.compute_dense_reward(obs=obs, action=action, info=info) / 33.0
+        return self.compute_dense_reward(obs=obs, action=action, info=info) / 30.0
