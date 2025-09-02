@@ -15,6 +15,11 @@ python map_rl_from_example/ppo_map.py \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
+<<<<<<< HEAD
     # --load_actor_logstd \
     # --checkpoint "save_checkpoint/ckpt_21.pt" \
+=======
+    --checkpoint "save_checkpoint/ckpt_561.pt" \
+    --load_actor_logstd \
+>>>>>>> map_rl
     # --start_condition_map
