@@ -216,7 +216,7 @@ class NatureCNN(nn.Module):
 
         # Map-related components
         object.__setattr__(self, "_decoder", decoder)
-        self.use_map = use_map and (decoder is not None)
+        self.use_map = use_map
         self.start_condition_map = start_condition_map
         self.use_local_fusion = self.use_map and use_local_fusion
         if self.use_map:
