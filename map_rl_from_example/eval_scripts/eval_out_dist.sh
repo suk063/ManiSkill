@@ -7,5 +7,5 @@ python map_rl_from_example/ppo_map_eval.py \
     --vision_encoder=dino \
     --use_map \
     --object_num=2 \
-    --eval_distribution="in" \
+    --eval_distribution="out" \
     --checkpoint="runs/YCB_sequential_xarm6_ppo_map_dino_zero_2_object/ckpt_81.pt" 
