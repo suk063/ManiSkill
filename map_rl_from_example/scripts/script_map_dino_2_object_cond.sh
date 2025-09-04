@@ -9,7 +9,7 @@ python map_rl_from_example/ppo_map.py \
     --num_steps=200 \
     --num_eval_steps=200 \
     --gamma=0.9 \
-    --ent_coef=2e-3 \
+    --ent_coef=1e-3 \
     --learning_rate=3e-4 \
     --vision_encoder=dino \
     --capture-video \
@@ -17,6 +17,11 @@ python map_rl_from_example/ppo_map.py \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
     --object_num=2 \
+<<<<<<< HEAD
     --checkpoint "save_checkpoint/ckpt_1641.pt" \
     --start_condition_map \
     --load_actor_logstd
+=======
+    --checkpoint "save_checkpoint/ckpt_2181.pt" \
+    --start_condition_map 
+>>>>>>> latest-maprl
