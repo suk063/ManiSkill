@@ -5,7 +5,7 @@ python map_rl_from_example/ppo_map.py \
     --num_envs=100 \
     --num_eval_envs=20 \
     --eval_freq=20 \
-    --total_timesteps=50_000_000 \
+    --total_timesteps=100_000_000 \
     --num_steps=200 \
     --num_eval_steps=200 \
     --gamma=0.9 \
@@ -16,6 +16,6 @@ python map_rl_from_example/ppo_map.py \
     --track \
     --wandb_project_name "PPO-RL-Map" \
     --use_map \
-    --object_num=3
-
+    --object_num=3 \
+    --checkpoint "save_checkpoint/ckpt_2181.pt" 
     # --start_condition_map
