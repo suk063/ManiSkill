@@ -124,7 +124,7 @@ parser.add_argument(
 parser.add_argument(
     "--decoder-path",
     type=str,
-    default="pretrained/implicit_decoder.pt",
+    default="save_checkpoint/shared_decoder.pt",
     help="Path to pre-trained decoder weights (implicit decoder)."
 )
 args = parser.parse_args()
