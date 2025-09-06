@@ -328,12 +328,29 @@ if __name__ == "__main__":
     print(f"####")
     agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map, use_local_fusion=args.use_local_fusion, use_rel_pos_in_fusion=args.use_rel_pos_in_fusion).to(device)
     
-    params_to_update = agent.parameters()
-    if args.vision_encoder == "dino":
-        print("--- DINO backbone is frozen, excluding from optimizer ---")
-        dino_backbone_params_ids = set(map(id, agent.feature_net.vision_encoder.backbone.parameters()))
-        params_to_update = [p for p in agent.parameters() if id(p) not in dino_backbone_params_ids]
-    optimizer = optim.Adam(params_to_update, lr=args.learning_rate, eps=1e-5)
+    if args.use_map and args.start_condition_map:
+        print("--- Using different learning rates for PointNet and other components ---")
+        pointnet_params = list(agent.feature_net.map_encoder.parameters()) + [agent.feature_net.map_gate]
+        pointnet_params_ids = set(map(id, pointnet_params))
+
+        base_params = [p for p in agent.parameters() if id(p) not in pointnet_params_ids]
+        
+        if args.vision_encoder == "dino":
+            print("--- DINO backbone is frozen, excluding from optimizer ---")
+            dino_backbone_params_ids = set(map(id, agent.feature_net.vision_encoder.backbone.parameters()))
+            base_params = [p for p in base_params if id(p) not in dino_backbone_params_ids]
+
+        optimizer = optim.Adam([
+            {'params': base_params, 'lr': args.learning_rate / 30},
+            {'params': pointnet_params, 'lr': args.learning_rate}
+        ], eps=1e-5)
+    else:
+        params_to_update = agent.parameters()
+        if args.vision_encoder == "dino":
+            print("--- DINO backbone is frozen, excluding from optimizer ---")
+            dino_backbone_params_ids = set(map(id, agent.feature_net.vision_encoder.backbone.parameters()))
+            params_to_update = [p for p in agent.parameters() if id(p) not in dino_backbone_params_ids]
+        optimizer = optim.Adam(params_to_update, lr=args.learning_rate, eps=1e-5)
 
     if args.checkpoint:
         print(f"Loading checkpoint from {args.checkpoint}")

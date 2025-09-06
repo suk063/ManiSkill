@@ -344,6 +344,11 @@ class NatureCNN(nn.Module):
             encoded_tensor_list.append(task_emb)
 
         if map_vec is not None:
+            ### DEBUG: just use the map_vec directly
+            # if self.start_condition_map:
+            #     encoded_tensor_list.append(map_vec)
+            # else:
+            #     encoded_tensor_list.append(self.map_gate * map_vec)
             encoded_tensor_list.append(self.map_gate * map_vec)
 
         return torch.cat(encoded_tensor_list, dim=1)
