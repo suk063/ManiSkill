@@ -78,8 +78,8 @@ class DINO2DFeatureEncoder(nn.Module):
         if images_bchw.dtype != torch.float32:
             images_bchw = images_bchw.float()
 
-        B, _, H, W = images_bchw.shape
         images_bchw = self.transform(images_bchw)
+        B, _, H, W = images_bchw.shape
         
         with torch.no_grad():
             tokens = self._forward_dino_tokens(images_bchw)
@@ -219,13 +219,15 @@ class NatureCNN(nn.Module):
         self.use_map = use_map
         self.start_condition_map = start_condition_map
         self.use_local_fusion = self.use_map and use_local_fusion
+        self.last_gate_value = None
         if self.use_map:
             map_raw_dim = 768  # output dim of *decoder*
             self.map_encoder = PointNet(map_raw_dim, feature_size)
             self.out_features += feature_size
-            self.map_gate = nn.Parameter(torch.zeros(feature_size))
-            if not self.start_condition_map:
-                self.map_gate.requires_grad = False
+            self.map_gate_trainable = nn.Parameter(torch.full((feature_size,), -5.0))
+            # self.map_gate = nn.Parameter(torch.zeros((feature_size,)))
+            # if not self.start_condition_map:
+            #     self.map_gate_trainable.requires_grad = False
             
             if self.use_local_fusion:
                 self.map_feature_proj = nn.Linear(map_raw_dim, self.embed_dim)
@@ -345,11 +347,14 @@ class NatureCNN(nn.Module):
 
         if map_vec is not None:
             ### DEBUG: just use the map_vec directly
-            # if self.start_condition_map:
-            #     encoded_tensor_list.append(map_vec)
-            # else:
-            #     encoded_tensor_list.append(self.map_gate * map_vec)
-            encoded_tensor_list.append(self.map_gate * map_vec)
+            if self.start_condition_map:
+                gate = torch.sigmoid(self.map_gate_trainable)
+                self.last_gate_value = gate
+                encoded_tensor_list.append(gate * map_vec)
+            else:
+                encoded_tensor_list.append(map_vec)
+            # gate = torch.sigmoid(self.map_gate)
+            # encoded_tensor_list.append(gate * map_vec)
 
         return torch.cat(encoded_tensor_list, dim=1)
 

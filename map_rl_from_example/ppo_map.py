@@ -330,7 +330,7 @@ if __name__ == "__main__":
     
     if args.use_map and args.start_condition_map:
         print("--- Using different learning rates for PointNet and other components ---")
-        pointnet_params = list(agent.feature_net.map_encoder.parameters()) + [agent.feature_net.map_gate]
+        pointnet_params = list(agent.feature_net.map_encoder.parameters()) + [agent.feature_net.map_gate_trainable]
         pointnet_params_ids = set(map(id, pointnet_params))
 
         base_params = [p for p in agent.parameters() if id(p) not in pointnet_params_ids]
@@ -637,7 +637,12 @@ if __name__ == "__main__":
         logger.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         logger.add_scalar("losses/explained_variance", explained_var, global_step)
         if args.use_map and args.start_condition_map:
-            logger.add_scalar("charts/map_gate_norm", agent.feature_net.map_gate.norm().item(), global_step)
+            if agent.feature_net.last_gate_value is not None:
+                gate_vals = agent.feature_net.last_gate_value
+                logger.add_scalar("charts/map_gate_sigmoid_mean", gate_vals.mean().item(), global_step)
+                logger.add_scalar("charts/map_gate_sigmoid_std", gate_vals.std().item(), global_step)
+                logger.add_scalar("charts/map_gate_sigmoid_max", gate_vals.max().item(), global_step)
+                logger.add_scalar("charts/map_gate_sigmoid_min", gate_vals.min().item(), global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         logger.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         logger.add_scalar("time/step", global_step, global_step)

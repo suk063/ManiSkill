@@ -65,3 +65,4 @@ segmentation_id_map.txt
 *.zip
 
 mapping/posed_rgbd_data
+eval_video/

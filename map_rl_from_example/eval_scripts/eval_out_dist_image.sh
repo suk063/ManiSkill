@@ -1,11 +1,11 @@
 python map_rl_from_example/ppo_map_eval.py \
     --env_id=PickYCBSequential-v1 \
     --control_mode=pd_joint_vel \
-    --exp_name=YCB_sequential_xarm6_ppo_map_dino_EVAL_IN_DIST \
+    --exp_name=YCB_sequential_xarm6_ppo_map_dino_EVAL_OUT_DIST_IMAGE \
     --num_eval_envs=100 \
     --num_eval_steps=200 \
     --vision_encoder=dino \
     --use_map \
     --object_num=2 \
-    --eval_distribution="in" \
-    --checkpoint="runs/YCB_sequential_xarm6_ppo_map_dino_zero_2_object/ckpt_81.pt" 
+    --eval_distribution="out" \
+    --checkpoint="save_checkpoint/ckpt_2181.pt"
