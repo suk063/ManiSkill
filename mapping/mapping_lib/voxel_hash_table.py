@@ -389,8 +389,8 @@ class VoxelHashTable(nn.Module):
     @staticmethod
     def load_dense(path, device="cuda:0"):
         chk = torch.load(path, map_location="cpu")
-        vt = VoxelHashTable(device=device)  # default ctor, train mode
-        vt.load_state_dict(chk["state_dict"])
+        vt  = VoxelHashTable(device=device)    # default ctor, train mode
+        vt.load_state_dict(chk['state_dict'], strict=False)
         return vt.to(device)
 
     @staticmethod
