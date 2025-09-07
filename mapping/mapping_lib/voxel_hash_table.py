@@ -319,10 +319,10 @@ class VoxelHashTable(nn.Module):
         resolution: float = 0.12,
         num_levels: int = 2,
         level_scale: float = 2.0,
-        feature_dim: int = 32,
+        feature_dim: int = 64,
         hash_table_size: int = 2**21,
-        scene_bound_min: tuple[float, ...] = (-2.6, -8.1, 0),
-        scene_bound_max: tuple[float, ...] = (4.6, 4.7, 3.1),
+        scene_bound_min: tuple[float, ...] = (-0.8, -1.0, -0.1),
+        scene_bound_max: tuple[float, ...] = (0.4,  1.0,  0.3),
         device: str = "cuda:0",
         mode: str = "train",
         sparse_data: Optional[Dict] = None,
@@ -332,6 +332,10 @@ class VoxelHashTable(nn.Module):
         dev = torch.device(device)
         primes = _primes(dev)
         self.levels = nn.ModuleList()
+
+
+        self.scene_bound_min = scene_bound_min
+        self.scene_bound_max = scene_bound_max
 
         if mode == "train":
             # Iterate coarse → fine by reversing the exponent.
@@ -378,6 +382,61 @@ class VoxelHashTable(nn.Module):
             raise RuntimeError("export_sparse only in train mode")
         return dict(num_levels=len(self.levels), feature_dim=self.d, levels=[lv.export_sparse() for lv in self.levels])
 
+    def clone(self):
+        if self.mode != "train":
+            raise NotImplementedError("clone() is only supported for VoxelHashTable in 'train' mode.")
+
+        # Reconstruct args from self
+        try:
+            device = next(self.parameters()).device
+        except StopIteration:
+            device = "cpu"
+
+        num_levels = len(self.levels)
+        feature_dim = self.d
+
+        if num_levels > 0:
+            first_level = self.levels[0]
+            one_to_one = first_level.one_to_one
+            hash_table_size = first_level.buckets
+            scene_bound_min = tuple(first_level.smin.cpu().tolist())
+            scene_bound_max = tuple(first_level.smax.cpu().tolist())
+
+            if num_levels > 1:
+                level_scale = self.levels[0].res / self.levels[1].res
+                resolution = self.levels[-1].res
+            else:  # num_levels == 1
+                level_scale = 2.0  # default value, does not matter
+                resolution = first_level.res
+        else:  # num_levels == 0
+            # Fallback to default parameters from __init__
+            one_to_one = True
+            resolution = 0.12
+            level_scale = 2.0
+            hash_table_size = 2**21
+            scene_bound_min = (-0.8, -1.0, -0.1)
+            scene_bound_max = (0.4, 1.0, 0.3)
+
+        new_grid = VoxelHashTable(
+            one_to_one=one_to_one,
+            resolution=resolution,
+            num_levels=num_levels,
+            level_scale=level_scale,
+            feature_dim=feature_dim,
+            hash_table_size=hash_table_size,
+            scene_bound_min=scene_bound_min,
+            scene_bound_max=scene_bound_max,
+            device=str(device),
+            mode=self.mode,
+        )
+        if num_levels > 0:
+            new_grid.load_state_dict(self.state_dict())
+        return new_grid
+
+    def get_scene_bounds(self):
+        """Return the scene bounds."""
+        return self.scene_bound_min, self.scene_bound_max
+
     # dense weight file
     def save_dense(self, path):
         torch.save({"state_dict": self.state_dict()}, path)
@@ -389,8 +448,8 @@ class VoxelHashTable(nn.Module):
     @staticmethod
     def load_dense(path, device="cuda:0"):
         chk = torch.load(path, map_location="cpu")
-        vt = VoxelHashTable(device=device)  # default ctor, train mode
-        vt.load_state_dict(chk["state_dict"])
+        vt  = VoxelHashTable(device=device)    # default ctor, train mode
+        vt.load_state_dict(chk['state_dict'], strict=False)
         return vt.to(device)
 
     @staticmethod
@@ -417,8 +476,8 @@ class MultiVoxelHashTable(nn.Module):
         level_scale: float = 2.0,
         feature_dim: int = 64,
         hash_table_size: int = 2**21,
-        scene_bound_min: list[float] = [-2.7, -8.2, -0.1],
-        scene_bound_max: list[float] = [4.6, 4.7, 3.2],
+        scene_bound_min: list[float] = [-0.8, -1.0, -0.1],
+        scene_bound_max: list[float] = [0.4,  1.0,  0.3],
         mode: str = "train",
         sparse_data: Optional[List[Dict]] = None,
     ):
