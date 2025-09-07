@@ -216,7 +216,8 @@ if __name__ == "__main__":
                 if not os.path.exists(grid_path):
                     print(f"[ERROR] Map file not found: {grid_path}. Exiting.")
                     exit()
-                all_grids.append(VoxelHashTable.load_sparse(grid_path, device=device))
+                grid = VoxelHashTable.load_sparse(grid_path, device="cpu")
+                all_grids.append(grid.to(device))
             print(f"--- Loaded {len(all_grids)} maps. ---")
 
             for grid in all_grids:
