@@ -98,6 +98,8 @@ class Args:
     """if toggled, only runs evaluation with the given model checkpoint and saves the evaluation trajectories"""
     eval_distribution: str = "in"
     """the distribution of environments to evaluate on ('in' or 'out')"""
+    env_idx: Optional[int] = None
+    """if specified, evaluates on a single environment with this index"""
     
     # to be filled in runtime
     num_tasks: int = 0
@@ -113,7 +115,10 @@ if __name__ == "__main__":
     if args.sampling_envs is None:
         args.sampling_envs = args.total_envs
     
-    run_name = f"eval_{args.env_id}_{args.eval_distribution}_dist_{int(time.time())}"
+    if args.env_idx is not None:
+        run_name = f"eval_{args.env_id}_env_{args.env_idx}_{int(time.time())}"
+    else:
+        run_name = f"eval_{args.env_id}_{args.eval_distribution}_dist_{int(time.time())}"
     if args.exp_name is not None:
         run_name = args.exp_name
 
@@ -149,7 +154,10 @@ if __name__ == "__main__":
             print(f"[ERROR] Map directory not found: {args.map_dir}. Exiting.")
             sys.exit(1)
 
-        num_maps_to_load = args.total_envs if args.eval_distribution == "out" else args.sampling_envs
+        if args.env_idx is not None:
+            num_maps_to_load = args.total_envs
+        else:
+            num_maps_to_load = args.total_envs if args.eval_distribution == "out" else args.sampling_envs
         print(f"Loading {num_maps_to_load} maps from {args.map_dir} ...")
         for i in range(num_maps_to_load):
             grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.sparse.pt")
@@ -173,22 +181,31 @@ if __name__ == "__main__":
     env_kwargs["object_num"] = args.object_num
     
     # Set up evaluation indices BEFORE creating the environment
-    rng_eval = np.random.RandomState(args.seed)
-    if args.eval_distribution == "in":
-        print(f"Evaluating on in-distribution environments (0-{args.sampling_envs - 1})")
-        eval_indices = rng_eval.choice(args.sampling_envs, args.num_eval_envs, replace=False)
-    elif args.eval_distribution == "out":
-        ood_start_idx = args.sampling_envs
-        ood_end_idx = args.total_envs
-        num_ood_envs = ood_end_idx - ood_start_idx
-        print(f"Evaluating on out-of-distribution environments ({ood_start_idx}-{ood_end_idx - 1})")
-        if args.num_eval_envs > num_ood_envs:
-            print(f"[WARNING] num_eval_envs ({args.num_eval_envs}) > num_ood_envs ({num_ood_envs}). Using all OOD envs.")
-            args.num_eval_envs = num_ood_envs
-        
-        eval_indices = rng_eval.choice(np.arange(ood_start_idx, ood_end_idx), args.num_eval_envs, replace=False)
+    if args.env_idx is not None:
+        print(f"Evaluating on a single environment with index {args.env_idx}")
+        args.num_eval_envs = 1
+        eval_indices = np.array([args.env_idx])
     else:
-        raise ValueError(f"Invalid eval_distribution: {args.eval_distribution}")
+        rng_eval = np.random.RandomState(args.seed)
+        if args.eval_distribution == "in":
+            print(f"Evaluating on in-distribution environments (0-{args.sampling_envs - 1})")
+            all_indices = np.arange(args.sampling_envs)
+            rng_eval.shuffle(all_indices)
+            eval_indices = np.sort(all_indices[:args.num_eval_envs])
+        elif args.eval_distribution == "out":
+            ood_start_idx = args.sampling_envs
+            ood_end_idx = args.total_envs
+            num_ood_envs = ood_end_idx - ood_start_idx
+            print(f"Evaluating on out-of-distribution environments ({ood_start_idx}-{ood_end_idx - 1})")
+            if args.num_eval_envs > num_ood_envs:
+                print(f"[WARNING] num_eval_envs ({args.num_eval_envs}) > num_ood_envs ({num_ood_envs}). Using all OOD envs.")
+                args.num_eval_envs = num_ood_envs
+            
+            all_indices = np.arange(ood_start_idx, ood_end_idx)
+            rng_eval.shuffle(all_indices)
+            eval_indices = np.sort(all_indices[:args.num_eval_envs])
+        else:
+            raise ValueError(f"Invalid eval_distribution: {args.eval_distribution}")
 
     eval_env_kwargs = env_kwargs.copy()
     eval_env_kwargs["is_eval"] = True
@@ -201,7 +218,7 @@ if __name__ == "__main__":
         eval_envs = FlattenActionSpaceWrapper(eval_envs)
 
     if args.capture_video:
-        video_dir = os.path.join(os.path.dirname(args.checkpoint), f"videos_{args.eval_distribution}_dist")
+        video_dir = "eval_video"
         eval_output_dir = f"{video_dir}/{run_name}"
         print(f"Saving eval videos to {eval_output_dir}")
         eval_envs = RecordEpisode(eval_envs, output_dir=eval_output_dir, save_trajectory=args.evaluate, trajectory_name="trajectory", max_steps_per_video=args.num_eval_steps, video_fps=30)
@@ -307,4 +324,15 @@ if __name__ == "__main__":
     print(f"Total evaluation time: {eval_time:.2f}s")
     
     eval_envs.close()
+
+    if args.env_idx is not None and args.capture_video:
+        eval_output_dir = f"eval_video/{run_name}"
+        video_path = os.path.join(eval_output_dir, "0.mp4")
+        if os.path.exists(video_path):
+            # As we are evaluating a single environment, success_once should have a single value.
+            success_once = eval_metrics.get('success_once', [False])[0]
+            new_video_path = os.path.join(eval_output_dir, f"{args.env_idx}.mp4")
+            os.rename(video_path, new_video_path)
+            print(f"Renamed video to {new_video_path} (success_once={success_once})")
+
     print("--- Evaluation Finished ---")

@@ -62,6 +62,7 @@ playground/
 dinov3
 
 segmentation_id_map.txt
-<<<<<<< HEAD
-=======
 *.zip
+
+mapping/posed_rgbd_data
+eval_video/
