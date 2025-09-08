@@ -139,7 +139,7 @@ class PointNet(nn.Module):
 
 
 class NatureCNN(nn.Module):
-    def __init__(self, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False, use_rel_pos_in_fusion: bool = True):
+    def __init__(self, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False, use_rel_pos_in_fusion: bool = True, use_online_mapping: bool = False):
         super().__init__()
         self.vision_encoder_name = vision_encoder
         self.vision_encoder = None
@@ -218,6 +218,7 @@ class NatureCNN(nn.Module):
         object.__setattr__(self, "_decoder", decoder)
         self.use_map = use_map
         self.start_condition_map = start_condition_map
+        self.use_online_mapping = use_online_mapping
         self.use_local_fusion = self.use_map and use_local_fusion
         self.last_gate_value = None
         if self.use_map:
@@ -299,29 +300,32 @@ class NatureCNN(nn.Module):
                 
                 coords_batch, raw_batch = [], []
                 for g in map_features:
-                    coords = g.levels[1].coords
+                    level = g.levels[1]
+                    if self.use_online_mapping:
+                        accessed_indices = level.get_accessed_indices()
+                        coords = level.coords[accessed_indices]
+                    else:
+                        coords = level.coords
                     coords_batch.append(coords)
                     raw_batch.append(g.query_voxel_feature(coords))
-
                 # The decoder is pre-trained and used in inference mode.
                 with torch.no_grad():
                     dec_cat = self._decoder(torch.cat(raw_batch, dim=0))
-                
-                dec_split = dec_cat.split([c.size(0) for c in coords_batch], dim=0)
+                    dec_split = dec_cat.split([c.size(0) for c in coords_batch], dim=0)
 
-                if self.use_local_fusion:
-                    image_fmap = self._local_fusion(observations, image_fmap, coords_batch, dec_split)
-                
-                if self.start_condition_map:
-                    lengths = [c.size(0) for c in coords_batch]
-                    pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)
-                    coords_padded = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)
-                    Lmax = pad_3d.size(1)
-
-                    pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
-                            torch.tensor(lengths, device=pad_3d.device)[:, None]
+                    if self.use_local_fusion:
+                        image_fmap = self._local_fusion(observations, image_fmap, coords_batch, dec_split)
                     
-                    map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
+                    if self.start_condition_map:
+                        lengths = [c.size(0) for c in coords_batch]
+                        pad_3d = torch.nn.utils.rnn.pad_sequence(dec_split, batch_first=True)
+                        coords_padded = torch.nn.utils.rnn.pad_sequence(coords_batch, batch_first=True)
+                        Lmax = pad_3d.size(1)
+
+                        pad_mask = torch.arange(Lmax, device=pad_3d.device).expand(len(lengths), -1) >= \
+                                torch.tensor(lengths, device=pad_3d.device)[:, None]
+                        
+                        map_vec = self.map_encoder(pad_3d, coords_padded, pad_mask)
 
             if map_vec is None:
                 # Get feature size from the map encoder's last layer
@@ -470,9 +474,9 @@ class LocalFeatureFusion(nn.Module):
         return final_feat
 
 class Agent(nn.Module):
-    def __init__(self, envs, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False, use_rel_pos_in_fusion: bool = True):
+    def __init__(self, envs, sample_obs, vision_encoder: str, num_tasks: int = 0, decoder: Optional[nn.Module] = None, use_map: bool = False, device=None, start_condition_map: bool = False, use_local_fusion: bool = False, use_rel_pos_in_fusion: bool = True, use_online_mapping: bool = False):
         super().__init__()
-        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map, use_local_fusion=use_local_fusion, use_rel_pos_in_fusion=use_rel_pos_in_fusion)
+        self.feature_net = NatureCNN(sample_obs=sample_obs, vision_encoder=vision_encoder, num_tasks=num_tasks, decoder=decoder, use_map=use_map, device=device, start_condition_map=start_condition_map, use_local_fusion=use_local_fusion, use_rel_pos_in_fusion=use_rel_pos_in_fusion, use_online_mapping=use_online_mapping)
         # latent_size = np.array(envs.unwrapped.single_observation_space.shape).prod()
         latent_size = self.feature_net.out_features
         self.critic = nn.Sequential(

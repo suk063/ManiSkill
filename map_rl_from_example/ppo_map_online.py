@@ -371,7 +371,7 @@ if __name__ == "__main__":
     print(f"args.num_iterations={args.num_iterations} args.num_envs={args.num_envs} args.num_eval_envs={args.num_eval_envs}")
     print(f"args.minibatch_size={args.minibatch_size} args.batch_size={args.batch_size} args.update_epochs={args.update_epochs}")
     print(f"####")
-    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map, use_local_fusion=args.use_local_fusion, use_rel_pos_in_fusion=args.use_rel_pos_in_fusion).to(device)
+    agent = Agent(envs, sample_obs=next_obs, vision_encoder=args.vision_encoder, num_tasks=args.num_tasks, decoder=decoder, use_map=args.use_map, device=device, start_condition_map=args.start_condition_map, use_local_fusion=args.use_local_fusion, use_rel_pos_in_fusion=args.use_rel_pos_in_fusion, use_online_mapping=args.use_online_mapping).to(device)
     
     if args.use_map and args.start_condition_map:
         print("--- Using different learning rates for PointNet and other components ---")
@@ -440,7 +440,11 @@ if __name__ == "__main__":
             if args.use_online_mapping:
                 # if initial_decoder_state_dict:
                 #     decoder.load_state_dict(initial_decoder_state_dict)
-                online_grids = [grid.clone() for grid in grids]
+                online_grids = []
+                for i in active_indices:
+                    grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.pt")
+                    online_grids.append(VoxelHashTable.load_dense(grid_path, device=device))
+
                 for grid in online_grids:
                     for p in grid.parameters():
                         p.requires_grad = True
@@ -466,7 +470,11 @@ if __name__ == "__main__":
             if args.use_online_mapping and args.use_map:
                 # if initial_decoder_state_dict:
                 #     decoder.load_state_dict(initial_decoder_state_dict)
-                online_eval_grids = [grid.clone() for grid in eval_grids]
+                online_eval_grids = []
+                for i in eval_indices:
+                    grid_path = os.path.join(args.map_dir, f"env_{i:03d}_grid.pt")
+                    online_eval_grids.append(VoxelHashTable.load_dense(grid_path, device=device))
+
                 for grid in online_eval_grids:
                     for p in grid.parameters():
                         p.requires_grad = True

@@ -84,7 +84,7 @@ class _TrainLevel(nn.Module):
         self.register_buffer("col", torch.tensor(n_collisions, device=self.voxel_features.device), persistent=False)
         self.col: torch.Tensor
 
-        self.register_buffer("access", torch.zeros(self.buckets, dtype=torch.bool, device=dev), persistent=False)
+        self.register_buffer("access", torch.zeros(self.buckets, dtype=torch.bool, device=dev), persistent=True)
         self.access: torch.BoolTensor
 
         logging.info(f"Level filled: {self.buckets} voxels, {n_collisions} collisions")

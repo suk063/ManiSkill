@@ -118,7 +118,7 @@ parser.add_argument(
     "--envs",
     type=str,
     nargs='+',
-    default=['env_000', 'env_001', 'env_002', 'env_003', 'env_004', 'env_005', 'env_006', 'env_007', 'env_008', 'env_009'],
+    default=['env_000'],
     help="List of environment directory names to visualize (e.g., env_000 env_001)."
 )
 parser.add_argument(
