@@ -142,9 +142,10 @@ class _TrainLevel(nn.Module):
         # )
 
     # ---------- internals
-    def _lookup(self, idxg):
+    def _lookup(self, idxg, mark_accessed: bool = True):
         vid = (idxg * self.primes).sum(-1) % self.buckets
-        self.access[vid] = True  # log access
+        if mark_accessed:
+            self.access[vid] = True  # log access
         return self.voxel_features[vid]
 
         # hv = (idxg * self.primes).sum(-1) % self.buckets
@@ -156,7 +157,7 @@ class _TrainLevel(nn.Module):
         #     out[valid] = self.voxel_features[vid[valid]]
         # return out
 
-    def query(self, pts):
+    def query(self, pts, mark_accessed: bool = True):
         with torch.no_grad():
             if self.one_to_one:
                 q = (pts - self.smin) / self.res
@@ -168,7 +169,7 @@ class _TrainLevel(nn.Module):
             base = torch.floor(q).long()
             idx = base[:, None, :] + self.corner_offsets[None, :, :]
 
-        feat = self._lookup(idx)
+        feat = self._lookup(idx, mark_accessed=mark_accessed)
 
         frac = q - base.float()
         wx = torch.stack([1 - frac[:, 0], frac[:, 0]], 1)
@@ -357,8 +358,8 @@ class VoxelHashTable(nn.Module):
             raise ValueError("mode must be 'train' or 'infer'")
 
     # forward -----------------------------------------------------------------
-    def query_voxel_feature(self, pts):  # (M,3) → (M, d*L)
-        per = [lv.query(pts) for lv in self.levels]
+    def query_voxel_feature(self, pts, mark_accessed: bool = True):  # (M,3) → (M, d*L)
+        per = [lv.query(pts, mark_accessed=mark_accessed) for lv in self.levels]
         return torch.cat(per, -1)
 
     # utils -------------------------------------------------------------------
@@ -460,9 +461,9 @@ class VoxelHashTable(nn.Module):
     def distribute_to_devices(self):
         pass
 
-    def query_feature(self, x: torch.Tensor, scene_id: torch.Tensor) -> torch.Tensor:
+    def query_feature(self, x: torch.Tensor, scene_id: torch.Tensor, mark_accessed: bool = True) -> torch.Tensor:
         assert scene_id.unique().numel() == 1, "VoxelHashTable can only handle one scene_id"
-        return self.query_voxel_feature(x)
+        return self.query_voxel_feature(x, mark_accessed=mark_accessed)
 
 
 class MultiVoxelHashTable(nn.Module):
@@ -516,7 +517,7 @@ class MultiVoxelHashTable(nn.Module):
             device = self.devices[scene_id % len(self.devices)]
             self.voxel_hash_tables[scene_id].to(device)
 
-    def query_feature(self, x: torch.Tensor, scene_id: torch.Tensor) -> torch.Tensor:
+    def query_feature(self, x: torch.Tensor, scene_id: torch.Tensor, mark_accessed: bool = True) -> torch.Tensor:
         """
         x: (N,3)
         scene_id: (N,) long tensor indicating which scene each point belongs to
@@ -543,7 +544,7 @@ class MultiVoxelHashTable(nn.Module):
             x_scene = x_scene.to(device)
             # Query the voxel feature
             voxel_hash_table: VoxelHashTable = self.voxel_hash_tables[s_id]
-            feats = voxel_hash_table.query_voxel_feature(x_scene)
+            feats = voxel_hash_table.query_voxel_feature(x_scene, mark_accessed=mark_accessed)
             # Move feats back to the output tensor on the original device
             all_feats[mask] = feats.to(all_feats.device)
         return all_feats

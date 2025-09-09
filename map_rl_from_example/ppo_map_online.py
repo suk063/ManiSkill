@@ -508,10 +508,8 @@ if __name__ == "__main__":
                 # Online map update for evaluation
                 if args.use_online_mapping:
                     if _ % args.map_update_freq == 0:
-                        is_obj_grasped = eval_infos['is_grasped_obj_1'] | eval_infos['is_grasped_obj_2']
-                        update_mask = ~is_obj_grasped
                         decoder.eval()
-                        update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args, update_mask=update_mask)
+                        update_map_online(eval_obs, eval_obs['sensor_param'], online_eval_grids, clip_model, decoder, eval_map_optimizer, args)
 
                 if "final_info" in eval_infos:
                     mask = eval_infos["_final_info"]
@@ -567,9 +565,7 @@ if __name__ == "__main__":
 
             if args.use_online_mapping:
                 if step % args.map_update_freq == 0:
-                    is_obj_grasped = infos['is_grasped_obj_1'] | infos['is_grasped_obj_2']
-                    update_mask = ~is_obj_grasped
-                    update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args, update_mask=update_mask)
+                    update_map_online(next_obs, next_obs['sensor_param'], online_grids, clip_model, decoder, map_optimizer, args)
 
             next_env_target_obj_idx_1 = infos['env_target_obj_idx_1']
             next_env_target_obj_idx_2 = infos['env_target_obj_idx_2']

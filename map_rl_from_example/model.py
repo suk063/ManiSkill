@@ -307,7 +307,8 @@ class NatureCNN(nn.Module):
                     else:
                         coords = level.coords
                     coords_batch.append(coords)
-                    raw_batch.append(g.query_voxel_feature(coords))
+                    raw_batch.append(g.query_voxel_feature(coords, mark_accessed=False))
+                
                 # The decoder is pre-trained and used in inference mode.
                 with torch.no_grad():
                     dec_cat = self._decoder(torch.cat(raw_batch, dim=0))
